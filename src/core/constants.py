@@ -1,0 +1,332 @@
+from enum import Enum
+
+EVENT_TYPE_CONNECT = 1
+EVENT_TYPE_CONNECTED = "EVENT_TYPE_CONNECTED"
+EVENT_TYPE_DISCONNECTED = "EVENT_TYPE_DISCONNECTED"
+EVENT_TYPE_NEXT_VALID_ORDER = 2
+EVENT_TYPE_STEP_COMPLETE = 5
+EVENT_TYPE_STEP="EVENT_TYPE_STEP"
+EVENT_TYPE_DATA_READY = 6
+EVENT_TYPE_OPEN_TRADE_LONG = 7
+EVENT_TYPE_OPEN_TRADE_SHORT = 8
+EVENT_TYPE_CLOSE_TRADE = 9
+EVENT_TYPE_CLOSE_TRADE_WITH_LIMIT = "EVENT_TYPE_CLOSE_TRADE_WITH_LIMIT"
+EVENT_TYPE_OPTION_CHAIN_READY = 10
+EVENT_TYPE_START = 12
+EVENT_TYPE_TELEGRAM_MESSAGE=13
+EVENT_TYPE_TELEGRAM_PHOTO="EVENT_TYPE_TELEGRAM_PHOTO"
+EVENT_TYPE_CANCEL_STOP="EVENT_TYPE_CANCEL_STOP"
+
+EVENT_TYPE_OPTION_CONTRACT_FIND=15
+EVENT_TYPE_OPTION_CONTRACT_FOUND=16
+EVENT_TYPE_OPTION_CONTRACT_NOT_FOUND=17
+
+EVENT_TYPE_CONTRACT_PRICE = 18
+
+EVENT_TYPE_TRADE_PENDING="EVENT_TYPE_TRADE_PENDING"
+EVENT_TYPE_TRADE_OPENED="EVENT_TYPE_TRADE_OPENED"
+EVENT_TYPE_TRADE_CLOSED="EVENT_TYPE_TRADE_CLOSED"
+EVENT_TYPE_TRADE_CANCELLED="EVENT_TYPE_TRADE_CANCELLED"
+
+EVENT_TYPE_POSITION_UPDATE="EVENT_TYPE_POSITION_UPDATE"
+
+EVENT_TYPE_CANCEL_PENDING_ORDERS=23
+EVENT_TYPE_CANCEL_EXPIRED_PENDING_ORDERS=26
+EVENT_TYPE_SECURITY_NOT_FOUND=24
+EVENT_TYPE_RETURNS_READY=25
+
+EVENT_TYPE_START_ALGO = "EVENT_TYPE_START_ALGO"
+EVENT_TYPE_STOP_ALGO = "EVENT_TYPE_STOP_ALGO"
+EVENT_TYPE_RESET_DB="EVENT_TYPE_RESET_DB"
+
+EVENT_TYPE_GET_ORDERS_BY_STATUS="EVENT_TYPE_GET_ORDERS_BY_STATUS"
+
+EVENT_TYPE_REQUEST_PNL="EVENT_TYPE_REQUEST_PNL"
+EVENT_TYPE_UPDATE_PNL="EVENT_TYPE_UPDATE_PNL"
+
+
+EVENT_TYPE_GET_HISTORY="EVENT_TYPE_GET_HISTORY"
+EVENT_TYPE_ORDER_STATUS_UPDATE="EVENT_ORDER_STATUS_UPDATE"
+
+EVENT_TYPE_MARKET_OPEN="EVENT_TYPE_MARKET_OPEN"
+EVENT_TYPE_MARKET_CLOSED="EVENT_TYPE_MARKET_CLOSED"
+EVENT_TYPE_SEND_PLOT="EVENT_TYPE_SEND_PLOT"
+
+EVENT_TYPE_ACCOUNT_VALUE="EVENT_TYPE_ACCOUNT_VALUE"
+EVENT_TYPE_FLATTEN_POSITION="EVENT_TYPE_FLATTEN"
+EVENT_TYPE_REQUEST_BALANCE_SUMMARY="EVENT_TYPE_REQUEST_BALANCE_SUMMARY"
+EVENT_TYPE_OPTION_COMPUTATION="EVENT_TYPE_OPTION_COMPUTATION"
+EVENT_TYPE_UPDATE_STOP_ORDER="EVENT_TYPE_UPDATE_STOP_ORDER"
+
+EVENT_TYPE_CREATE_NEW_ORDER="EVENT_TYPE_CREATE_NEW_ORDER"
+EVENT_TYPE_CLOSE_STAGNANT_POSITIONS="EVENT_TYPE_CLOSE_STAGNANT_POSITIONS"
+EVENT_TYPE_ENTRY_ORDER_CANCELLED="EVENT_TYPE_ENTRY_ORDER_CANCELLED"
+EVENT_TYPE_ENTRY_ORDER_FILLED="EVENT_TYPE_ENTRY_ORDER_FILLED"
+EVENT_TYPE_STOP_ORDER_FILLED="EVENT_TYPE_STOP_ORDER_FILLED"
+EVENT_TYPE_CREATE_FLATTEN_ORDER="EVENT_TYPE_CREATE_FLATTEN_ORDER"
+EVENT_TYPE_FLATTEN_ORDER_FILLED="EVENT_TYPE_FLATTEN_ORDER_FILLED"
+EVENT_TYPE_API_ORDER_EVENT="EVENT_TYPE_API_ORDER_EVENT"
+EVENT_TYPE_ALTER_TRADES_TABLE="EVENT_TYPE_ALTER_TRADES_TABLE"
+EVENT_TYPE_LOAD_CLOSED_TRADES="EVENT_TYPE_LOAD_CLOSED_TRADES"
+EVENT_TYPE_LOAD_DAILY_NET_RETURN="EVENT_TYPE_LOAD_DAILY_NET_RETURN"
+EVENT_TYPE_LOAD_ACCOUNT_BALANCE="EVENT_TYPE_LOAD_ACCOUNT_BALANCE"
+EVENT_TYPE_MANAGE_POSITIONS="EVENT_TYPE_MANAGE_POSITIONS"
+
+EVENT_TYPE_CHECK_UNPROTECTED_POSITIONS="EVENT_TYPE_CHECK_UNPROTECTED_POSITIONS"
+EVENT_TYPE_DELETE_TRADE="EVENT_TYPE_DELETE_TRADE"
+EVENT_TYPE_SMART_CONNECTION_CHECK="EVENT_TYPE_SMART_CONNECTION_CHECK"
+EVENT_TYPE_OPTIONS_CONNECTION_CHECK="EVENT_TYPE_OPTIONS_CONNECTION_CHECK"
+EVENT_TYPE_CALCULATE_CORRELATION="EVENT_TYPE_CALCULATE_CORRELATION"
+EVENT_TYPE_SEND_CORRELATION_TELEGRAM="EVENT_TYPE_SEND_CORRELATION_TELEGRAM"
+EVENT_TYPE_SEND_EXCHANGE_RATES="EVENT_TYPE_SEND_EXCHANGE_RATES"
+EVENT_TYPE_CALCULATE_EXCHANGE_RATES="EVENT_TYPE_CALCULATE_EXCHANGE_RATES"
+EVENT_TYPE_CALCULATE_MARGIN_REQUIREMENTS="EVENT_TYPE_CALCULATE_MARGIN_REQUIREMENTS"
+EVENT_TYPE_SEND_MARGIN_REQUIREMENTS="EVENT_TYPE_SEND_MARGIN_REQUIREMENTS"
+
+# Strategy-specific events
+EVENT_TYPE_DEEP_REVERSAL="EVENT_TYPE_DEEP_REVERSAL"
+EVENT_TYPE_EMA_BOUNCE="EVENT_TYPE_EMA_BOUNCE"
+EVENT_TYPE_ASIAN_SESSION_BREAKOUT="EVENT_TYPE_ASIAN_SESSION_BREAKOUT"
+EVENT_TYPE_BB_SQUEEZE_BREAKOUT="EVENT_TYPE_BB_SQUEEZE_BREAKOUT"
+
+# Stock trading events
+EVENT_TYPE_PRE_MARKET_SCAN="EVENT_TYPE_PRE_MARKET_SCAN"
+EVENT_TYPE_CALCULATE_OPENING_RANGE="EVENT_TYPE_CALCULATE_OPENING_RANGE"
+EVENT_TYPE_ORB_STRATEGY="EVENT_TYPE_ORB_STRATEGY"
+EVENT_TYPE_MANAGE_STOCK_POSITIONS="EVENT_TYPE_MANAGE_STOCK_POSITIONS"
+EVENT_TYPE_CLOSE_ALL_STOCK_POSITIONS="EVENT_TYPE_CLOSE_ALL_STOCK_POSITIONS"
+EVENT_TYPE_STOCKS_CONNECTION_CHECK="EVENT_TYPE_STOCKS_CONNECTION_CHECK"
+CONFIG_HOST = "host"
+CONFIG_PORT = "port"
+CONFIG_CLIENT_ID = "client_id"
+CONFIG_UP_CONFIDENCE_THRESHOLD = "up_conf_thresh"
+CONFIG_DN_CONFIDENCE_THRESHOLD = "dn_conf_thresh"
+CONFIG_HISTORY_DURATION = "history_duration"
+CONFIG_HISTORY_BAR_SIZE = "history_bar_size"
+CONFIG_TREND_BAR_SIZE = "trend_bar_size"
+CONFIG_ACCOUNT = "account"
+CONFIG_PROFIT_PERCENTAGE = "profit_percent"
+CONFIG_STOP_LOSS_PERCENTAGE = "stop_loss_percent"
+CONFIG_MIN_PREMIUM = "min_premium"
+CONFIG_SPREAD_WIDTH = "spread_width"
+CONFIG_MAX_ORDER_AGE = "max_order_age"
+CONFIG_SYMBOL = "symbol"
+CONFIG_CURRENCY = "currency"
+CONFIG_CURRENCY_FORMAT_STRING = "currency_format_string"
+CONFIG_STOPPED = "stopped"
+CONFIG_CONNECTED = "connected"
+CONFIG_LOT_SIZE = "lot_size"
+CONFIG_MARGIN_PERCENTAGE = "margin_percentage"
+CONFIG_RISK_PERCENTAGE = "risk_percentage"
+CONFIG_MIN_MARGIN_THRESHOLD = "min_margin_threshold"
+CONFIG_EXCHANGE = "exchange"
+CONFIG_VALID_DAYS = "valid_days"
+CONFIG_ENTRY_PRICE_MARKUP_PERCENT = "markup"
+CONFIG_SEC_TYPE = "sec_type"
+CONFIG_DECIMAL_PLACES = "decimal_places"
+CONFIG_MARKET_OPEN = "market_open"
+CONFIG_DEBUG = "debug"
+CONFIG_STOP_LOSS_PIPS = "init_stp_pips"
+CONFIG_INITIAL_PROFIT_PIPS = "init_prof_pips"
+CONFIG_PROFIT_TARGET_PIPS = "profit_target_pips"
+CONFIG_TRAILING_STOP_PIPS = "trl_stp_pips"
+CONFIG_DAILY_RETURN_CIRCUIT_BREAKER_THRESHOLD = "circuit_breaker"
+
+CONFIG_PIP_SIZE = "pip_size"
+CONFIG_TELEGRAM_TOKEN = "telegram_token"
+CONFIG_TELEGRAM_CHAT_ID = "telegram_chat_id"
+CONFIG_TIMEZONE = "timezone"
+
+# Stock trading configuration
+CONFIG_ORB_PERIOD_MINUTES = "orb_period_minutes"
+CONFIG_MAX_POSITIONS = "max_positions"
+CONFIG_MIN_PRICE = "min_price"
+CONFIG_MAX_PRICE = "max_price"
+CONFIG_MIN_VOLUME = "min_volume"
+
+FIELD_ORDER_ID = "order_id"
+FIELD_ORDER = "order"
+FIELD_ORDERS = "orders"
+FIELD_PRICES = "prices"
+FIELD_CHILD_ORDER_ID = "child_order_id"
+FIELD_CON_ID = "con_id"
+FIELD_CONTRACT = "contract"
+FIELD_ACCOUNT_VALUE_TAG="account_value_tag"
+FIELD_ACCOUNT_VALUE="account_value"
+FIELD_ACCOUNT_VALUE_CURRENCY="account_value_currency"
+
+FIELD_OPTION_CONTRACTS = "option_contracts"
+FIELD_UNDERLYING_CONTRACTS = "underlying_contracts"
+
+FIELD_UNDERLYING_CONTRACT = "underlying_contract"
+FIELD_TYPE = "type"
+FIELD_SYMBOL = "symbol"
+FIELD_BAR = "bar"
+FIELD_QTY = "quantity"
+FIELD_LIMIT_PRICE = "limit_price"
+FIELD_AVG_PRICE = "avg_price"
+FIELD_MESSAGE = "message"
+FIELD_PHOTO_DATA = "photo_data"
+FIELD_PRICE = "price"
+FIELD_TICK_TYPE = "tick_type"
+FIELD_EXCHANGE = "exchange"
+FIELD_CHAIN_DATA = "chain_data"
+FIELD_DATA = "data"
+FIELD_CALLBACK="callback"
+FIELD_STATUS="status"
+FIELD_UPDATE_OBJECT="UPDATE"
+FIELD_CONTEXT_OBJECT="CONTEXT"
+FIELD_PNL="pnl"
+FIELD_UNREALIZED_PNL="FIELD_UNREALIZED_PNL"
+FIELD_USD_PNL="FIELD_USD_PNL"
+FIELD_LONG="long"
+FIELD_SHORT="short"
+FIELD_STRIKE="strike"
+FIELD_RIGHT="right"
+FIELD_BID="BID"
+FIELD_ASK="ASK"
+FIELD_SIGNAL_CONFIDENECE="signal_confidence"
+FIELD_EXCLUDED_STRIKES="excluded_strikes"
+FIELD_CURRENT_STOP_PERCENT="current_stop_percent"
+FIELD_CURRENT_PROFIT_PERCENT="current_profit_percent"
+FIELD_OPEN_TRADE="open_trade"
+FIELD_NEXT_ORDER_ID="next_order_id"
+FIELD_RL_ENV="rl_env"
+FIELD_TRADE="trade"
+FIELD_PLOT="plot"
+
+FIELD_OPTION_IV="option_iv"
+FIELD_OPTION_DELTA="option_delta"
+FIELD_OPTION_GAMMA="option_gamma"
+FIELD_OPTION_VEGA="option_vega"
+FIELD_OPTION_THETA="option_theta"
+FIELD_OPTION_TICK_TYPE="option_tick_type"
+FIELD_STOP_PRICE="stop_price"
+FIELD_VALUE_ESTIMATE="value_estimate"
+FIELD_CLOSED_TRADES="closed_trades"
+FIELD_KELLY_BET_SIZE="kelly_bet_size"
+FIELD_ACCOUNT_BALANCE="account_balance"
+FIELD_SUGGESTED_TRADE_SIZE="suggested_trade_size"
+FIELD_CONTRACTS_LOADED="contracts_loaded"
+FIELD_CORRELATION_MATRIX="correlation_matrix"
+FIELD_EXCHANGE_RATES="exchange_rates"
+FIELD_MARGIN_REQUIREMENTS="margin_requirements"
+FIELD_BB_SQUEEZE_STATES="bb_squeeze_states"
+FIELD_DIRECTION="direction"
+
+FLAT = 0
+LONG = 1
+SHORT = 2
+NONE = 3
+
+class ImpactEnum(Enum):
+    LOW = 1
+    MEDIUM = 2
+    HIGH = 3
+class Signals(Enum):
+    BB_CROSS = 1
+    RSI_REVERSAL = 2
+
+# Forex pairs configuration
+FOREX_PAIRS = {
+    "EUR.USD": {
+        "base": "EUR",
+        "quote": "USD", 
+        "mini_lot": 1000,      # 1 mini lot = 10,000 base currency
+        "pip_size": 0.0001,     # 4 decimal places
+        "decimal_places": 5,    # IB uses 5 decimal places (pipettes)
+        "exchange": "IDEALPRO",
+        "enabled": True,
+        "min_qty": 20            # IBKR minimum: 20,000 EUR
+    },
+    "GBP.USD": {
+        "base": "GBP",
+        "quote": "USD",
+        "mini_lot": 1000,
+        "pip_size": 0.0001,
+        "decimal_places": 5,
+        "exchange": "IDEALPRO",
+        "enabled": True,
+        "min_qty": 20            # IBKR minimum: 20,000 GBP
+    },
+    "USD.JPY": {
+        "base": "USD", 
+        "quote": "JPY",
+        "mini_lot": 1000,
+        "pip_size": 0.01,       # 2 decimal places for JPY pairs
+        "decimal_places": 3,    # IB uses 3 decimal places for JPY pairs
+        "exchange": "IDEALPRO",
+        "enabled": True,
+        "min_qty": 25           # IBKR minimum: 25,000 USD (2,500,000 JPY)
+    },
+    "AUD.USD": {
+        "base": "AUD",
+        "quote": "USD",
+        "mini_lot": 1000,
+        "pip_size": 0.0001,
+        "decimal_places": 5,
+        "exchange": "IDEALPRO",
+        "enabled": True,
+        "min_qty": 25            # IBKR minimum: 25,000 AUD
+    },
+    "USD.CHF": {
+        "base": "USD",
+        "quote": "CHF", 
+        "mini_lot": 1000,
+        "pip_size": 0.0001,
+        "decimal_places": 5,
+        "exchange": "IDEALPRO",
+        "enabled": True,
+        "min_qty": 25           # IBKR minimum: 25,000 USD (25,000 CHF)
+    },
+    "CHF.USD": {
+        "base": "CHF",
+        "quote": "USD", 
+        "pip_size": 0.0001,
+        "decimal_places": 5,
+        "exchange": "IDEALPRO",
+        "enabled": False,
+        "mini_lot": 10000,
+        "min_qty": 25            # IBKR minimum: 25,000 CHF
+    },
+    "USD.CAD": {
+        "base": "USD",
+        "quote": "CAD",
+        "mini_lot": 1000,       # IBKR mini lot = 1K
+        "pip_size": 0.0001,
+        "decimal_places": 5,
+        "exchange": "IDEALPRO",
+        "enabled": True,
+        "min_qty": 25           # Need 25 mini lots for best pricing
+    },
+    "NZD.USD": {
+        "base": "NZD",
+        "quote": "USD",
+        "mini_lot": 1000,        # Corrected to match other major pairs
+        "pip_size": 0.0001,
+        "decimal_places": 5,
+        "exchange": "IDEALPRO",
+        "enabled": True,
+        "min_qty": 35           # IBKR minimum: 35,000 NZD
+    },
+    "EUR.GBP": {
+        "base": "EUR",
+        "quote": "GBP",
+        "mini_lot": 1000,
+        "pip_size": 0.0001,
+        "decimal_places": 5,
+        "exchange": "IDEALPRO",
+        "enabled": True,
+        "min_qty": 20           # IBKR minimum: 20,000 EUR (17,000 GBP)
+    },
+    "EUR.CHF": {
+        "base": "EUR",
+        "quote": "CHF",
+        "mini_lot": 1000,       # IBKR mini lot = 1K
+        "pip_size": 0.0001,
+        "decimal_places": 5,
+        "exchange": "IDEALPRO",
+        "enabled": True,
+        "min_qty": 20           # Need 20 mini lots for best pricing
+    }
+}

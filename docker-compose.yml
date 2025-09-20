@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  orb-stocks:
+    build: .
+    container_name: orb-stocks
+    restart: unless-stopped
+    volumes:
+      - shared-volume:/app/data
+    ports:
+      - "8005:8003"
+    environment:
+      - HOST=ib-gateway-paper
+      - PORT=4004
+      - IB_CLIENT_ID=80
+      - ACCOUNT=DU123456
+      - TELEGRAM_TOKEN="1764833292:AAEZWcMIdKiLVGZRjZpkm0rAHJAKjtZyMpA"
+      - TELEGRAM_CHAT_ID="1780930883"
+      - ORB_PERIOD_MINUTES=30
+      - RISK_PERCENTAGE=0.5
+      - MAX_POSITIONS=5
+      - MIN_PRICE=5.00
+      - MAX_PRICE=100.00
+      - MIN_VOLUME=100000
+    networks:
+      - algolearn_network
+
+volumes:
+  shared-volume:
+
+networks:
+  algolearn_network:
+    external: true
