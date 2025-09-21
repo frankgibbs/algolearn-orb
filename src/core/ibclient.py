@@ -1101,32 +1101,32 @@ class IBClient(EWrapper, EClient):
     def get_stock_price(self, symbol, timeout=10):
         """
         Get current stock price (last/mark price)
-        
+
         Args:
             symbol: Stock symbol
             timeout: Timeout in seconds
-            
+
         Returns:
             Float price or None if error
         """
         try:
             # Create stock contract
             stock_contract = self.get_stock_contract(symbol)
-            
+
             # Get market data using stock-specific method
             quote_data = self.get_stock_market_data(stock_contract, timeout)
-            
+
             if not quote_data:
                 return None
-            
+
             # Try to get last price first, then average of bid/ask
             last_price = quote_data.get('last')
             if last_price and last_price > 0:
                 return float(last_price)
-            
+
             bid = quote_data.get('bid', 0)
             ask = quote_data.get('ask', 0)
-            
+
             if bid > 0 and ask > 0:
                 return float((bid + ask) / 2)
             elif bid > 0:
@@ -1136,8 +1136,173 @@ class IBClient(EWrapper, EClient):
             else:
                 logger.warning(f"No valid price found for {symbol}")
                 return None
-                
+
         except Exception as e:
             logger.error(f"Error getting stock price for {symbol}: {e}")
             return None
+
+    def get_stock_bars(self, symbol, duration_minutes=60, bar_size="1 min", timeout=10):
+        """
+        Get historical bars for a stock (wrapper around existing get_historic_data)
+
+        Args:
+            symbol: Stock symbol
+            duration_minutes: Number of minutes to fetch (e.g., 60 for 1 hour)
+            bar_size: Bar size (e.g., "1 min", "5 mins")
+            timeout: Timeout in seconds
+
+        Returns:
+            DataFrame with OHLCV data
+
+        Raises:
+            RuntimeError: If no data received or contract invalid
+            TimeoutError: If request times out
+        """
+        if not symbol:
+            raise ValueError("symbol is required")
+
+        # Create stock contract
+        contract = self.get_stock_contract(symbol)
+
+        # Convert minutes to IB duration string
+        duration_str = f"{duration_minutes} M"
+
+        # Use existing method with TRADES data for stocks
+        result = self.get_historic_data(contract, duration_str, bar_size, timeout, "TRADES")
+
+        if result is None:
+            raise TimeoutError(f"Timeout getting historical data for {symbol}")
+
+        if result.empty:
+            raise RuntimeError(f"No historical data received for {symbol}")
+
+        return result
+
+    def place_stock_entry_with_stop(self, symbol, action, quantity, entry_price, stop_price):
+        """
+        Place ONLY entry and stop orders (NO take profit order)
+        Take profit is monitored by position manager, not placed as order
+
+        Args:
+            symbol: Stock symbol
+            action: "BUY" or "SELL"
+            quantity: Number of shares
+            entry_price: Limit price for entry (ignored for market orders)
+            stop_price: Stop loss price
+
+        Returns:
+            Dict with {'parent_order_id': xxx, 'stop_order_id': xxx, 'symbol': xxx}
+
+        Raises:
+            ValueError: If parameters are invalid
+            RuntimeError: If order IDs cannot be obtained
+        """
+        if not symbol:
+            raise ValueError("symbol is required")
+        if action not in ["BUY", "SELL"]:
+            raise ValueError("action must be BUY or SELL")
+        if quantity <= 0:
+            raise ValueError("quantity must be positive")
+        if stop_price <= 0:
+            raise ValueError("stop_price must be positive")
+
+        # Create stock contract
+        contract = self.get_stock_contract(symbol)
+
+        # Get next order IDs - max from IB and DB
+        ib_next_id = self.get_next_order_id()
+        if ib_next_id is None:
+            raise RuntimeError("Could not get next order ID from IB")
+
+        # TODO: Get max order ID from database when database_manager is available
+        # For now, just use IB's next ID
+        parent_order_id = ib_next_id
+        stop_order_id = parent_order_id + 1
+
+        # Create parent order (entry) - MARKET order
+        parent = Order()
+        parent.orderId = parent_order_id
+        parent.action = action
+        parent.orderType = "MKT"  # Market order for guaranteed fill
+        parent.totalQuantity = quantity
+        parent.tif = "DAY"  # Day order
+        parent.transmit = False  # Don't send yet
+
+        # Create child stop order
+        stop_order = Order()
+        stop_order.orderId = stop_order_id
+        stop_order.parentId = parent_order_id
+        stop_order.action = "SELL" if action == "BUY" else "BUY"  # Opposite action
+        stop_order.orderType = "STP"  # Stop market order
+        stop_order.auxPrice = stop_price  # Trigger price
+        stop_order.totalQuantity = quantity
+        stop_order.tif = "DAY"  # Day order
+        stop_order.transmit = True  # Send both orders
+
+        logger.info(f"Placing stock orders for {symbol}: {action} {quantity} shares, stop at {stop_price}")
+
+        # Place orders
+        self.placeOrder(parent.orderId, contract, parent)
+        self.placeOrder(stop_order.orderId, contract, stop_order)
+
+        # Return order IDs immediately (no confirmation wait)
+        return {
+            'parent_order_id': parent_order_id,
+            'stop_order_id': stop_order_id,
+            'symbol': symbol,
+            'action': action,
+            'quantity': quantity,
+            'entry_price': entry_price,
+            'stop_price': stop_price
+        }
+
+    def modify_stop_order(self, order_id, new_stop_price, timeout=10):
+        """
+        Modify an existing stop order (for trailing stops)
+        Used to implement trailing stop by moving existing stop order
+
+        Args:
+            order_id: Stop order ID to modify
+            new_stop_price: New stop price
+            timeout: Timeout for order lookup
+
+        Returns:
+            True if successful
+
+        Raises:
+            ValueError: If parameters are invalid
+            RuntimeError: If order not found, not a stop order, or already filled
+        """
+        if not order_id:
+            raise ValueError("order_id is required")
+        if new_stop_price <= 0:
+            raise ValueError("new_stop_price must be positive")
+
+        # Get existing order details
+        order_details = self.get_order_by_id(order_id, timeout)
+        if not order_details:
+            raise RuntimeError(f"Order {order_id} not found")
+
+        # Extract order and contract
+        existing_order = order_details['order']
+        contract = order_details['contract']
+        order_state = order_details.get('orderState', 'Unknown')
+
+        # Validate it's actually a stop order
+        if existing_order.orderType not in ['STP', 'STP LMT']:
+            raise ValueError(f"Order {order_id} is not a stop order (type: {existing_order.orderType})")
+
+        # Check order status (can't modify filled/cancelled orders)
+        if order_state in ['Filled', 'Cancelled']:
+            raise RuntimeError(f"Cannot modify {order_state} order {order_id}")
+
+        # Modify the stop price
+        existing_order.auxPrice = new_stop_price
+
+        logger.info(f"Modifying stop order {order_id} to new stop price: {new_stop_price}")
+
+        # Re-submit with same order ID (this modifies it)
+        self.placeOrder(order_id, contract, existing_order)
+
+        return True
 
