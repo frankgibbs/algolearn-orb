@@ -5,11 +5,11 @@ import pytz
 from datetime import datetime
 
 class ManageStockPositionsCommand(Command):
-    """Manage open stock positions - stops, targets, time exits"""
+    """Monitor position state transitions: PENDING → OPEN → CLOSED"""
 
     def execute(self, event):
         """
-        Execute position management for all open stock positions
+        Execute position status monitoring for state transitions only
 
         Args:
             event: Event data (required)
@@ -20,7 +20,7 @@ class ManageStockPositionsCommand(Command):
         if event is None:
             raise ValueError("event is REQUIRED")
 
-        logger.debug("Managing stock positions")
+        logger.debug("Checking position state transitions")
 
         # Validate market hours
         pacific_tz = pytz.timezone('US/Pacific')
@@ -29,127 +29,186 @@ class ManageStockPositionsCommand(Command):
         if not self._is_market_hours(now):
             return
 
-        # TODO: Get open positions from database
-        open_positions = []
+        # Check pending positions for fills
+        self._check_pending_positions()
+
+        # Check open positions for stop fills
+        self._check_open_positions()
+
+    def _check_pending_positions(self):
+        """Check PENDING positions for order fills"""
+        pending_positions = self.database_manager.get_pending_positions()
+
+        if not pending_positions:
+            logger.debug("No pending positions to check")
+            return
+
+        logger.info(f"Checking {len(pending_positions)} pending positions")
+
+        for position in pending_positions:
+            self._check_position_fill(position)
+
+    def _check_open_positions(self):
+        """Check OPEN positions for stop order fills"""
+        open_positions = self.database_manager.get_open_positions()
 
         if not open_positions:
-            logger.debug("No open stock positions to manage")
+            logger.debug("No open positions to check")
             return
 
-        logger.info(f"Managing {len(open_positions)} open stock positions")
+        logger.info(f"Checking {len(open_positions)} open positions")
 
-        # Process each position
         for position in open_positions:
-            try:
-                self._manage_position(position, now)
-            except Exception as e:
-                logger.error(f"Error managing position {position}: {e}")
-                # Continue with other positions
+            self._check_stop_fill(position)
 
-    def _manage_position(self, position, now):
+    def _check_position_fill(self, position):
         """
-        Manage a single stock position
+        Check if a pending position's parent order has been filled
 
         Args:
             position: Position record (required)
-            now: Current datetime (required)
+
+        Raises:
+            ValueError: If position is None
+        """
+        if position is None:
+            raise ValueError("position is REQUIRED")
+
+        logger.debug(f"Checking parent order fill for position {position.id}")
+
+        # Get order status from IB
+        order_status = self.client.get_order_by_id(position.id)
+
+        if order_status and order_status.get('status') == 'Filled':
+            fill_price = order_status.get('avgFillPrice', 0.0)
+            fill_time = order_status.get('fillTime')
+
+            # Transition to OPEN
+            self._transition_to_open(position, fill_price, fill_time)
+
+    def _check_stop_fill(self, position):
+        """
+        Check if an open position's stop order has been filled
+
+        Args:
+            position: Position record (required)
+
+        Raises:
+            ValueError: If position is None
+        """
+        if position is None:
+            raise ValueError("position is REQUIRED")
+
+        logger.debug(f"Checking stop order fill for position {position.id}")
+
+        # Get stop order status from IB
+        stop_order_status = self.client.get_order_by_id(position.stop_order_id)
+
+        if stop_order_status and stop_order_status.get('status') == 'Filled':
+            exit_price = stop_order_status.get('avgFillPrice', 0.0)
+            exit_time = stop_order_status.get('fillTime')
+
+            # Transition to CLOSED
+            self._transition_to_closed(position, exit_price, exit_time, "STOP_LOSS")
+
+    def _transition_to_open(self, position, fill_price, fill_time):
+        """
+        Transition position from PENDING to OPEN
+
+        Args:
+            position: Position record (required)
+            fill_price: Fill price from IB (required)
+            fill_time: Fill time from IB (required)
 
         Raises:
             ValueError: If any parameter is None
         """
         if position is None:
             raise ValueError("position is REQUIRED")
-        if now is None:
-            raise ValueError("now is REQUIRED")
+        if fill_price is None:
+            raise ValueError("fill_price is REQUIRED")
 
-        # TODO: Get actual position data
-        symbol = getattr(position, 'symbol', 'PLACEHOLDER')
-        entry_time = getattr(position, 'entry_time', now)
+        logger.info(f"Position {position.id} ({position.symbol}) filled at ${fill_price}")
 
-        logger.debug(f"Managing position: {symbol}")
-
-        # Check for end-of-day exit (12:50 PM PST)
-        if self._should_close_for_eod(now):
-            self._close_position(position, "End of day exit")
-            return
-
-        # Check for time-based exit (>90 minutes stagnant)
-        if self._should_close_for_time(position, now):
-            self._close_position(position, "Time-based exit")
-            return
-
-        # TODO: Check stop loss and take profit levels
-        # TODO: Implement trailing stops
-        # TODO: Update position P&L
-
-    def _should_close_for_eod(self, now):
-        """
-        Check if positions should be closed for end of day
-
-        Args:
-            now: Current datetime (required)
-
-        Returns:
-            Boolean indicating if EOD close is needed
-
-        Raises:
-            ValueError: If now is None
-        """
-        if now is None:
-            raise ValueError("now is REQUIRED")
-
-        # Close positions at 12:50 PM PST (3:50 PM ET)
-        return now.hour == 12 and now.minute >= 50
-
-    def _should_close_for_time(self, position, now):
-        """
-        Check if position should be closed due to time decay
-
-        Args:
-            position: Position record (required)
-            now: Current datetime (required)
-
-        Returns:
-            Boolean indicating if time-based close is needed
-
-        Raises:
-            ValueError: If any parameter is None
-        """
-        if position is None:
-            raise ValueError("position is REQUIRED")
-        if now is None:
-            raise ValueError("now is REQUIRED")
-
-        # TODO: Implement actual time-based exit logic
-        # Check if position has been open >90 minutes without profit
-        return False
-
-    def _close_position(self, position, reason):
-        """
-        Close a stock position
-
-        Args:
-            position: Position record (required)
-            reason: Reason for closing (required)
-
-        Raises:
-            ValueError: If any parameter is None
-        """
-        if position is None:
-            raise ValueError("position is REQUIRED")
-        if not reason:
-            raise ValueError("reason is REQUIRED")
-
-        # TODO: Get actual symbol
-        symbol = getattr(position, 'symbol', 'PLACEHOLDER')
-
-        logger.info(f"Closing position {symbol}: {reason}")
-
-        # TODO: Execute market order to close position
-        # TODO: Update position record in database
+        # Update position to OPEN status
+        self.database_manager.update_position_status(
+            position.id,
+            'OPEN',
+            entry_price=fill_price,
+            entry_time=fill_time
+        )
 
         # Send notification
-        self.state_manager.sendTelegramMessage(f"🔚 Closed {symbol}: {reason}")
+        direction = "📈 LONG" if position.direction == 'LONG' else "📉 SHORT"
+        self.state_manager.sendTelegramMessage(
+            f"✅ Position OPEN: {direction} {position.symbol} @ ${fill_price}"
+        )
+
+    def _transition_to_closed(self, position, exit_price, exit_time, exit_reason):
+        """
+        Transition position from OPEN to CLOSED
+
+        Args:
+            position: Position record (required)
+            exit_price: Exit price from IB (required)
+            exit_time: Exit time from IB (required)
+            exit_reason: Reason for exit (required)
+
+        Raises:
+            ValueError: If any parameter is None
+        """
+        if position is None:
+            raise ValueError("position is REQUIRED")
+        if exit_price is None:
+            raise ValueError("exit_price is REQUIRED")
+        if not exit_reason:
+            raise ValueError("exit_reason is REQUIRED")
+
+        logger.info(f"Position {position.id} ({position.symbol}) closed at ${exit_price}")
+
+        # Calculate realized P&L
+        realized_pnl = self._calculate_realized_pnl(position, exit_price)
+
+        # Update position to CLOSED status
+        self.database_manager.update_position_status(
+            position.id,
+            'CLOSED',
+            exit_price=exit_price,
+            exit_time=exit_time,
+            exit_reason=exit_reason,
+            realized_pnl=realized_pnl
+        )
+
+        # Send notification
+        pnl_emoji = "🟢" if realized_pnl >= 0 else "🔴"
+        self.state_manager.sendTelegramMessage(
+            f"🔚 Position CLOSED: {position.symbol} @ ${exit_price} | "
+            f"P&L: {pnl_emoji} ${realized_pnl:.2f} | Reason: {exit_reason}"
+        )
+
+    def _calculate_realized_pnl(self, position, exit_price):
+        """
+        Calculate realized P&L for a position
+
+        Args:
+            position: Position record (required)
+            exit_price: Exit price (required)
+
+        Returns:
+            Realized P&L as float
+
+        Raises:
+            ValueError: If any parameter is None
+        """
+        if position is None:
+            raise ValueError("position is REQUIRED")
+        if exit_price is None:
+            raise ValueError("exit_price is REQUIRED")
+
+        if position.direction == 'LONG':
+            return (exit_price - position.entry_price) * position.shares
+        else:  # SHORT
+            return (position.entry_price - exit_price) * position.shares
 
     def _is_market_hours(self, now):
         """

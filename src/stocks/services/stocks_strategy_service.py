@@ -1,4 +1,5 @@
 from src import logger
+from src.stocks.models.position import Position
 from datetime import datetime, date
 import pytz
 
@@ -90,13 +91,14 @@ class StocksStrategyService:
 
         return opening_range
 
-    def save_opening_range(self, symbol, date, range_high, range_low, range_size, range_size_pct):
+    def save_opening_range(self, symbol, date, timeframe_minutes, range_high, range_low, range_size, range_size_pct):
         """
         Save opening range to database
 
         Args:
             symbol: Stock symbol (required)
             date: Date of range (required)
+            timeframe_minutes: Timeframe in minutes - 15, 30, or 60 (required)
             range_high: High of opening range (required)
             range_low: Low of opening range (required)
             range_size: Absolute size of range (required)
@@ -109,6 +111,10 @@ class StocksStrategyService:
             raise ValueError("symbol is REQUIRED")
         if date is None:
             raise ValueError("date is REQUIRED")
+        if timeframe_minutes is None:
+            raise ValueError("timeframe_minutes is REQUIRED")
+        if timeframe_minutes not in [15, 30, 60]:
+            raise ValueError("timeframe_minutes must be 15, 30, or 60")
         if range_high is None:
             raise ValueError("range_high is REQUIRED")
         if range_low is None:
@@ -128,7 +134,7 @@ class StocksStrategyService:
 
         logger.info(f"Saving opening range for {symbol}: ${range_low:.2f}-${range_high:.2f} ({range_size_pct:.1f}%)")
 
-        self.database_manager.save_opening_range(symbol, date, range_high, range_low, range_size, range_size_pct)
+        self.database_manager.save_opening_range(symbol, date, timeframe_minutes, range_high, range_low, range_size, range_size_pct)
 
     def fetch_historical_bars(self, contract, duration, bar_size):
         """
@@ -169,9 +175,9 @@ class StocksStrategyService:
         Calculate high/low range from bars within time window
 
         Args:
-            bars: List of bar data (required)
-            start_time: Start time filter (optional)
-            end_time: End time filter (optional)
+            bars: List of bar data from IB (required)
+            start_time: Start time filter (optional, not used for single bar)
+            end_time: End time filter (optional, not used for single bar)
 
         Returns:
             Dict with range_high, range_low, range_size, range_size_pct
@@ -182,21 +188,36 @@ class StocksStrategyService:
         if not bars:
             raise ValueError("bars is REQUIRED and cannot be empty")
 
-        # TODO: Implement actual range calculation
-        # For now, return placeholder values
         logger.info(f"Calculating range from {len(bars)} bars")
 
-        # Placeholder calculation
-        range_high = 100.50
-        range_low = 99.50
+        # For single bar (opening range), use the bar's high/low
+        # For multiple bars, find the overall high/low
+        if len(bars) == 1:
+            # Single bar - use its high/low directly
+            bar = bars[0]
+            range_high = float(bar.high)
+            range_low = float(bar.low)
+        else:
+            # Multiple bars - find overall high/low
+            range_high = max(float(bar.high) for bar in bars)
+            range_low = min(float(bar.low) for bar in bars)
+
+        # Calculate derived values
         range_size = range_high - range_low
-        range_size_pct = (range_size / range_low) * 100
+
+        # Calculate percentage based on the midpoint
+        range_mid = (range_high + range_low) / 2
+        range_size_pct = (range_size / range_mid) * 100
+
+        logger.info(f"Range calculated: ${range_low:.2f}-${range_high:.2f} "
+                   f"(size: ${range_size:.2f}, {range_size_pct:.2f}%)")
 
         return {
             'range_high': range_high,
             'range_low': range_low,
             'range_size': range_size,
             'range_size_pct': range_size_pct,
+            'range_mid': range_mid,
             'bar_count': len(bars)
         }
 
@@ -276,3 +297,238 @@ class StocksStrategyService:
             'take_profit': 102.0,
             'confidence': breakout_info.get('confidence', 0)
         }
+
+    def calculate_opening_range(self, symbol, timeframe_minutes):
+        """
+        Calculate opening range for a symbol
+
+        Args:
+            symbol: Stock symbol (required)
+            timeframe_minutes: Timeframe in minutes - 15, 30, or 60 (required)
+
+        Returns:
+            Dict with opening range data: {
+                'symbol': str,
+                'range_high': float,
+                'range_low': float,
+                'range_mid': float,
+                'range_size': float,
+                'range_pct': float,
+                'valid': bool,
+                'reason': str  # If invalid
+            }
+
+        Raises:
+            ValueError: If symbol or timeframe_minutes is None
+            RuntimeError: If data fetch fails
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+        if timeframe_minutes is None:
+            raise ValueError("timeframe_minutes is REQUIRED")
+        if timeframe_minutes not in [15, 30, 60]:
+            raise ValueError("timeframe_minutes must be 15, 30, or 60")
+
+        logger.info(f"Calculating {timeframe_minutes}m opening range for {symbol}")
+
+        # Fetch historical bar for opening period
+        bar_size = f"{timeframe_minutes} mins"
+        bars = self.client.get_stock_bars(
+            symbol=symbol,
+            duration_minutes=timeframe_minutes,
+            bar_size=bar_size,
+            timeout=10
+        )
+
+        if not bars:
+            raise RuntimeError(f"No historical data received for {symbol}")
+
+        # Calculate range from bar(s)
+        range_data = self.calculate_range(bars)
+
+        # Validate range
+        from src.stocks.stocks_config import get_stock_config
+        stock_config = get_stock_config(symbol)
+        is_valid = self._validate_range_percentage(range_data['range_size_pct'], stock_config)
+
+        return {
+            'symbol': symbol,
+            'range_high': range_data['range_high'],
+            'range_low': range_data['range_low'],
+            'range_mid': range_data['range_mid'],
+            'range_size': range_data['range_size'],
+            'range_pct': range_data['range_size_pct'],
+            'valid': is_valid,
+            'reason': 'Valid range' if is_valid else f"Range {range_data['range_size_pct']:.1f}% outside bounds"
+        }
+
+    def check_breakout_signal(self, symbol, opening_range, current_price, previous_close):
+        """
+        Check if breakout conditions are met
+
+        Args:
+            symbol: Stock symbol (required)
+            opening_range: Opening range data (required)
+            current_price: Current market price (required)
+            previous_close: Previous candle close price (required)
+
+        Returns:
+            Dict with breakout info: {
+                'signal': 'LONG'|'SHORT'|'NONE',
+                'entry_price': float,
+                'stop_loss': float,
+                'take_profit': float,
+                'range_size': float
+            }
+
+        Raises:
+            ValueError: If any parameter is None
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+        if opening_range is None:
+            raise ValueError("opening_range is REQUIRED")
+        if current_price is None:
+            raise ValueError("current_price is REQUIRED")
+        if previous_close is None:
+            raise ValueError("previous_close is REQUIRED")
+
+        logger.info(f"Checking breakout signal for {symbol} at ${current_price}")
+
+        range_high = opening_range.range_high
+        range_low = opening_range.range_low
+        range_mid = (range_high + range_low) / 2
+        range_size = range_high - range_low
+
+        # Get take profit and trailing stop ratios from config
+        tp_ratio = self.state_manager.get_config_value(CONFIG_TAKE_PROFIT_RATIO) or 1.5
+
+        signal = 'NONE'
+        entry_price = current_price
+        stop_loss = None
+        take_profit = None
+
+        # Check for long breakout (close above range high)
+        if previous_close > range_high:
+            signal = 'LONG'
+            stop_loss = range_mid  # Stop at range midpoint
+            take_profit = entry_price + (range_size * tp_ratio)  # 1.5x range from entry
+
+        # Check for short breakout (close below range low)
+        elif previous_close < range_low:
+            signal = 'SHORT'
+            stop_loss = range_mid  # Stop at range midpoint
+            take_profit = entry_price - (range_size * tp_ratio)  # 1.5x range from entry
+
+        logger.info(f"Breakout signal for {symbol}: {signal}")
+
+        return {
+            'signal': signal,
+            'entry_price': entry_price,
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            'range_size': range_size
+        }
+
+    def calculate_position_parameters(self, signal_info, account_value, risk_pct):
+        """
+        Calculate position size and risk parameters
+
+        Args:
+            signal_info: Signal information dict (required)
+            account_value: Total account value (required)
+            risk_pct: Risk percentage per trade (required)
+
+        Returns:
+            Dict with position parameters: {
+                'shares': int,
+                'risk_amount': float,
+                'potential_profit': float,
+                'risk_reward_ratio': float
+            }
+
+        Raises:
+            ValueError: If any parameter is None or invalid
+        """
+        if signal_info is None:
+            raise ValueError("signal_info is REQUIRED")
+        if account_value is None or account_value <= 0:
+            raise ValueError("account_value is REQUIRED and must be > 0")
+        if risk_pct is None or risk_pct <= 0:
+            raise ValueError("risk_pct is REQUIRED and must be > 0")
+
+        entry_price = signal_info['entry_price']
+        stop_loss = signal_info['stop_loss']
+        take_profit = signal_info['take_profit']
+
+        if entry_price is None or stop_loss is None or take_profit is None:
+            raise ValueError("signal_info must contain entry_price, stop_loss, and take_profit")
+
+        # Calculate risk amount per share
+        risk_per_share = abs(entry_price - stop_loss)
+        if risk_per_share == 0:
+            raise ValueError("Risk per share cannot be zero")
+
+        # Calculate position size based on account risk
+        total_risk_amount = account_value * (risk_pct / 100)
+        shares = int(total_risk_amount / risk_per_share)
+
+        # Calculate potential profit
+        profit_per_share = abs(take_profit - entry_price)
+        potential_profit = shares * profit_per_share
+
+        # Calculate risk/reward ratio
+        risk_reward_ratio = profit_per_share / risk_per_share if risk_per_share > 0 else 0
+
+        logger.info(f"Position parameters: {shares} shares, risk ${total_risk_amount:.2f}, "
+                   f"potential profit ${potential_profit:.2f}, R/R {risk_reward_ratio:.2f}")
+
+        return {
+            'shares': shares,
+            'risk_amount': total_risk_amount,
+            'potential_profit': potential_profit,
+            'risk_reward_ratio': risk_reward_ratio
+        }
+
+    def _validate_range_percentage(self, range_size_pct, stock_config):
+        """
+        Validate if range size percentage is within acceptable bounds
+
+        Args:
+            range_size_pct: Range size as percentage (required)
+            stock_config: Stock configuration dict (required)
+
+        Returns:
+            Boolean indicating if range is valid
+
+        Raises:
+            ValueError: If any parameter is None
+        """
+        if range_size_pct is None:
+            raise ValueError("range_size_pct is REQUIRED")
+        if stock_config is None:
+            raise ValueError("stock_config is REQUIRED")
+
+        min_pct = stock_config['min_range_pct']
+        max_pct = stock_config['max_range_pct']
+
+        return min_pct <= range_size_pct <= max_pct
+
+    def get_open_positions_count(self):
+        """
+        Get count of currently open positions
+
+        Returns:
+            Integer count of open positions
+        """
+        try:
+            # Query positions with status 'OPEN' or 'PENDING'
+            open_positions = self.database_manager.session.query(Position).filter(
+                Position.status.in_(['OPEN', 'PENDING'])
+            ).count()
+
+            logger.debug(f"Current open positions count: {open_positions}")
+            return open_positions
+        except Exception as e:
+            logger.error(f"Error getting open positions count: {e}")
+            return 0

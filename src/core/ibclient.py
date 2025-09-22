@@ -1306,3 +1306,51 @@ class IBClient(EWrapper, EClient):
 
         return True
 
+    def convert_stop_to_market(self, order_id, timeout=10):
+        """
+        Convert a stop order to a market order for immediate execution
+        Used for time-based exits and EOD closures
+
+        Args:
+            order_id: Stop order ID to convert
+            timeout: Timeout for order lookup
+
+        Returns:
+            True if successful
+
+        Raises:
+            ValueError: If parameters are invalid
+            RuntimeError: If order not found, not a stop order, or already filled
+        """
+        if not order_id:
+            raise ValueError("order_id is required")
+
+        # Get existing order details
+        order_details = self.get_order_by_id(order_id, timeout)
+        if not order_details:
+            raise RuntimeError(f"Order {order_id} not found")
+
+        # Extract order and contract
+        existing_order = order_details['order']
+        contract = order_details['contract']
+        order_state = order_details.get('orderState', 'Unknown')
+
+        # Validate it's actually a stop order
+        if existing_order.orderType not in ['STP', 'STP LMT']:
+            raise ValueError(f"Order {order_id} is not a stop order (type: {existing_order.orderType})")
+
+        # Check order status (can't modify filled/cancelled orders)
+        if order_state in ['Filled', 'Cancelled']:
+            raise RuntimeError(f"Cannot modify {order_state} order {order_id}")
+
+        logger.info(f"Converting stop order {order_id} to market order for immediate execution")
+
+        # Convert to market order
+        existing_order.orderType = 'MKT'
+        existing_order.auxPrice = 0  # Market orders don't have stop price
+
+        # Re-submit with same order ID (this modifies it)
+        self.placeOrder(order_id, contract, existing_order)
+
+        return True
+

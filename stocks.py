@@ -60,11 +60,17 @@ class StocksService(IObserver):
         schedule.every().day.at("11:30").do(self.orb_strategy)
         schedule.every().day.at("12:00").do(self.orb_strategy)
 
-        # Position management every minute during market hours
-        schedule.every(60).seconds.do(self.manage_positions)
+        # Position state transitions every 30 seconds
+        schedule.every(30).seconds.do(self.manage_positions)
 
-        # Close all positions at 12:50 PM PST (3:50 PM ET)
-        schedule.every().day.at("12:50").do(self.close_all_positions)
+        # Trailing stop management every minute during market hours
+        schedule.every(60).seconds.do(self.move_stop_orders)
+
+        # Time-based exit checks every minute during market hours
+        schedule.every(60).seconds.do(self.time_based_exits)
+
+        # End-of-day position closure at 12:50 PM PST (3:50 PM ET)
+        schedule.every().day.at("12:50").do(self.end_of_day_exit)
 
         # Connection checks every 5 minutes (following forex pattern)
         for minute in range(0, 60, 5):
@@ -108,14 +114,26 @@ class StocksService(IObserver):
         self.subject.notify({FIELD_TYPE: EVENT_TYPE_ORB_STRATEGY})
 
     def manage_positions(self):
-        """Manage open stock positions"""
+        """Monitor position state transitions (PENDING → OPEN → CLOSED)"""
         market_open = self.state_manager.getConfigValue(CONFIG_MARKET_OPEN)
         if market_open:
             self.subject.notify({FIELD_TYPE: EVENT_TYPE_MANAGE_STOCK_POSITIONS})
 
-    def close_all_positions(self):
-        """Close all positions at end of day"""
-        self.subject.notify({FIELD_TYPE: EVENT_TYPE_CLOSE_ALL_STOCK_POSITIONS})
+    def move_stop_orders(self):
+        """Handle trailing stop order modifications"""
+        market_open = self.state_manager.getConfigValue(CONFIG_MARKET_OPEN)
+        if market_open:
+            self.subject.notify({FIELD_TYPE: EVENT_TYPE_MOVE_STOP_ORDER})
+
+    def time_based_exits(self):
+        """Check for time-based exits on stagnant positions"""
+        market_open = self.state_manager.getConfigValue(CONFIG_MARKET_OPEN)
+        if market_open:
+            self.subject.notify({FIELD_TYPE: EVENT_TYPE_TIME_BASED_EXIT})
+
+    def end_of_day_exit(self):
+        """Close all positions at end of day and generate daily report"""
+        self.subject.notify({FIELD_TYPE: EVENT_TYPE_END_OF_DAY_EXIT})
 
     def smart_connection_check(self):
         """Check IB connection status"""
@@ -172,7 +190,7 @@ def main():
         CONFIG_DEBUG: False,
         CONFIG_TIMEZONE: 'US/Pacific',
         # ORB Strategy specific parameters
-        CONFIG_ORB_PERIOD_MINUTES: args.orb_period,
+        CONFIG_ORB_TIMEFRAME: args.orb_period,
         CONFIG_RISK_PERCENTAGE: args.risk_pct,
         CONFIG_MAX_POSITIONS: args.max_positions,
         CONFIG_MIN_PRICE: args.min_price,
