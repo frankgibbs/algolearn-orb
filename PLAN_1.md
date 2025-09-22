@@ -7,6 +7,12 @@ Implement a simplified Opening Range Breakout (ORB) strategy with clear rules:
 - Breakout detection on close above/below range
 - Fixed risk/reward ratios with trailing stop
 
+## Error Handling Pattern
+All Commands and Services follow the error handling pattern documented in `CLAUDE.md`:
+- **Raise exceptions** on failures (don't return None/False)
+- **Let exceptions propagate** to CommandInvoker for consistent handling
+- **No try/catch** in commands unless handling specific recoverable errors
+
 ## Core Strategy Rules
 
 ### 1. Entry Conditions
@@ -225,78 +231,103 @@ def modify_stop_order(self, order_id, new_stop_price):
     """
 ```
 
-**Note:** We'll use existing methods for:
+**Implementation Details:**
+- Entry orders: MARKET (guaranteed fill on breakout)
+- Stop orders: STP (stop market, guaranteed execution)
+- Time in force: DAY orders (cancel at market close)
+- Exchange: SMART routing for all stocks
+- Order IDs: Max of IB next ID and DB max ID
+- Error handling: All methods raise exceptions (see CLAUDE.md)
+- No confirmation wait: Return immediately after placing orders
+
+**We'll use existing methods for:**
 - Account value: `get_pair_balance("USD")`
 - Current price: `get_stock_market_data()` or `get_stock_price()`
-- Positions: Track in database, reconcile with IB periodically
+- Position reconciliation: Periodic checks with IB API
 
-### 6. Database Schema
+### 6. Database Schema (SQLAlchemy Models)
 
-#### New Tables
-```sql
--- Opening ranges table
-CREATE TABLE opening_ranges (
-    id INTEGER PRIMARY KEY,
-    symbol VARCHAR(10),
-    date DATE,
-    timeframe_minutes INTEGER,
-    range_high DECIMAL(10,2),
-    range_low DECIMAL(10,2),
-    range_mid DECIMAL(10,2),
-    range_size DECIMAL(10,2),
-    range_pct DECIMAL(5,2),
-    is_valid BOOLEAN,
-    invalid_reason VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+#### Database Design Principles
+- **Simple**: Only store what we need
+- **Clean relationships**: Position.id = parent order ID
+- **No redundancy**: Calculate derived values when needed
 
--- Positions table
-CREATE TABLE positions (
-    id INTEGER PRIMARY KEY,
-    symbol VARCHAR(10),
-    direction VARCHAR(10),  -- 'LONG' or 'SHORT'
-    entry_time TIMESTAMP,
-    entry_price DECIMAL(10,2),
-    shares INTEGER,
-    stop_loss_price DECIMAL(10,2),
-    take_profit_price DECIMAL(10,2),
-    trailing_stop_active BOOLEAN DEFAULT FALSE,
-    trailing_stop_price DECIMAL(10,2),
-    take_profit_hit BOOLEAN DEFAULT FALSE,
-    range_size DECIMAL(10,2),
-    current_price DECIMAL(10,2),
-    unrealized_pnl DECIMAL(10,2),
-    status VARCHAR(20),  -- 'OPEN', 'CLOSED', 'PENDING'
-    exit_time TIMESTAMP,
-    exit_price DECIMAL(10,2),
-    exit_reason VARCHAR(100),
-    realized_pnl DECIMAL(10,2),
-    parent_order_id INTEGER,
-    stop_order_id INTEGER,
-    target_order_id INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+#### Models to Update/Create
 
--- Trade signals table (for tracking)
-CREATE TABLE trade_signals (
-    id INTEGER PRIMARY KEY,
-    symbol VARCHAR(10),
-    signal_time TIMESTAMP,
-    signal_type VARCHAR(10),  -- 'LONG', 'SHORT'
-    opening_range_id INTEGER,
-    breakout_price DECIMAL(10,2),
-    entry_price DECIMAL(10,2),
-    stop_loss DECIMAL(10,2),
-    take_profit DECIMAL(10,2),
-    position_size INTEGER,
-    executed BOOLEAN DEFAULT FALSE,
-    execution_time TIMESTAMP,
-    position_id INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (opening_range_id) REFERENCES opening_ranges(id),
-    FOREIGN KEY (position_id) REFERENCES positions(id)
-);
+**1. OpeningRange Model** (update existing)
+```python
+# Add ONE field to existing model:
+timeframe_minutes = Column(Integer, nullable=False)  # 15, 30, or 60
+
+# Notes:
+# - Only store VALID ranges (invalid ones just logged)
+# - One range per symbol per day (unique on symbol, date)
+# - range_mid calculated as (range_high + range_low) / 2
+```
+
+**2. Position Model** (create new)
+```python
+class Position(Base):
+    __tablename__ = "positions"
+
+    # Core identification
+    id = Column(Integer, primary_key=True, autoincrement=False)  # THIS IS the parent order ID!
+    stop_order_id = Column(Integer, nullable=False)  # Child stop order
+    opening_range_id = Column(Integer, ForeignKey('opening_ranges.id'))
+
+    # Trade details
+    symbol = Column(String(10), nullable=False)
+    direction = Column(String(10), nullable=False)  # 'LONG' or 'SHORT'
+    entry_time = Column(DateTime)
+    entry_price = Column(Float)
+    shares = Column(Integer, nullable=False)
+
+    # Risk management
+    stop_loss_price = Column(Float, nullable=False)  # Original stop price
+    take_profit_price = Column(Float, nullable=False)  # Monitored level, NOT an order
+    stop_moved = Column(Boolean, default=False)  # True if stop has been modified
+    trailing_stop_price = Column(Float)  # Current stop price (if moved)
+    range_size = Column(Float, nullable=False)  # For trailing calculations
+
+    # Status tracking
+    current_price = Column(Float)
+    unrealized_pnl = Column(Float)
+    status = Column(String(20), nullable=False)  # 'PENDING', 'OPEN', 'CLOSED'
+
+    # Exit details
+    exit_time = Column(DateTime)
+    exit_price = Column(Float)
+    exit_reason = Column(String(100))
+    realized_pnl = Column(Float)
+
+    # Timestamps
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+# Key Design Notes:
+# - NO parent_order_id field (id IS the parent order ID)
+# - NO target_order_id field (we don't place TP orders)
+# - NO trade_signals table (YAGNI - keep it simple)
+# - stop_moved replaces trailing_stop_active (more meaningful)
+# - Actual stop price: stop_loss_price if not moved, trailing_stop_price if moved
+```
+
+#### Database Manager Methods to Add
+```python
+def get_max_order_id(self):
+    """Get maximum order ID for IBClient order ID calculation"""
+
+def create_position(self, order_result, opening_range_id, take_profit_price, range_size):
+    """Create position with explicit ID from order result"""
+
+def get_pending_positions(self):
+    """Get positions with status='PENDING' for order monitoring"""
+
+def update_position_status(self, position_id, new_status, **kwargs):
+    """Update position status and other fields"""
+
+def get_open_positions(self):
+    """Get positions with status='OPEN' for management"""
 ```
 
 ### 7. Execution Flow
@@ -397,13 +428,13 @@ CONFIG = {
 
 ## Implementation Priority
 
-1. **Phase 1: Core Infrastructure**
-   - ✅ **COMPLETE**: Configuration and constants
-   - ✅ **COMPLETE**: Static stock list created
-   - 🔄 **NEXT**: IBClient methods for stocks
-   - Database schema
+1. **Phase 1: Core Infrastructure** ✅ **COMPLETE**
+   - ✅ Configuration and constants (6 new constants added)
+   - ✅ Static stock list created (10 symbols + configurations)
+   - ✅ IBClient methods for stocks (3 methods implemented)
+   - ✅ Database schema (OpeningRange updated + Position model created + 6 new manager methods)
 
-2. **Phase 2: Opening Range**
+2. **Phase 2: Opening Range** 🔄 **NEXT**
    - Calculate opening range command
    - Range validation logic
    - Database storage
