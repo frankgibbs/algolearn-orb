@@ -61,6 +61,7 @@ class StocksTelegramManager(IObserver):
             # Register command handlers - v13.5 style
             dp.add_handler(CommandHandler("plot", self.send_plot))
             dp.add_handler(CommandHandler("ranges", self.send_ranges))
+            dp.add_handler(CommandHandler("calc", self.calc_ranges))
             dp.add_handler(CommandHandler("pnl", self.send_pnl))
             dp.add_handler(CommandHandler("orders", self.send_orders))
 
@@ -123,22 +124,26 @@ class StocksTelegramManager(IObserver):
                 update.message.reply_text("No opening ranges calculated today")
                 return
 
-            # Format as PrettyTable
-            table = PrettyTable(['Symbol', 'Range %'])
-            table.align['Symbol'] = 'l'
-            table.align['Range %'] = 'r'
-
-            for r in ranges:
-                table.add_row([r['symbol'], f"{r['range_pct']:.1f}%"])
-
-            # Send using v13.5 parse_mode
-            update.message.reply_text(
-                f'📏 Opening Ranges\n<pre>{table}</pre>',
-                parse_mode=ParseMode.HTML
-            )
+            # Use shared formatting method
+            message = strategy_service.format_ranges_table(ranges)
+            update.message.reply_text(message, parse_mode=ParseMode.HTML)
 
         except Exception as e:
             logger.error(f"Error in send_ranges: {e}", exc_info=True)
+            update.message.reply_text(f"Error: {str(e)}")
+
+    def calc_ranges(self, update, context):
+        """Handle /calc command - Calculate opening ranges on demand"""
+        try:
+            timeframe = self.state_manager.getConfigValue(CONFIG_ORB_TIMEFRAME)
+            update.message.reply_text(f"📊 Calculating {timeframe}m opening ranges...")
+
+            # Trigger the calculation (synchronous - will complete before returning)
+            event = {FIELD_TYPE: EVENT_TYPE_CALCULATE_OPENING_RANGE}
+            self.subject.notify(event)
+
+        except Exception as e:
+            logger.error(f"Error in calc_ranges: {e}", exc_info=True)
             update.message.reply_text(f"Error: {str(e)}")
 
     def send_pnl(self, update, context):

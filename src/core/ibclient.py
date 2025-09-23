@@ -1186,8 +1186,8 @@ class IBClient(EWrapper, EClient):
         # Create stock contract
         contract = self.get_stock_contract(symbol)
 
-        # Convert minutes to IB duration string
-        duration_str = f"{duration_minutes} M"
+        # Convert minutes to IB duration string (M = MONTHS, so use seconds)
+        duration_str = f"{duration_minutes * 60} S"
 
         # Use existing method with TRADES data for stocks
         result = self.get_historic_data(contract, duration_str, bar_size, timeout, "TRADES")

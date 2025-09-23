@@ -9,7 +9,8 @@ class StocksConnectionManager(Command):
 
     def execute(self, event):
         """
-        Execute connection check and market hours validation
+        Execute connection management and market hours validation
+        Maintains connection 24/7 for monitoring and preparation
 
         Args:
             event: Event data (required)
@@ -20,19 +21,23 @@ class StocksConnectionManager(Command):
         if event is None:
             raise ValueError("event is REQUIRED")
 
-        logger.info("Checking stocks connection and market hours")
-
-        # Check IB connection status
-        is_connected = self.client.isConnected() if self.client else False
+        logger.info("Managing stocks connection and tracking market hours")
 
         # Get current time in Pacific timezone
         pacific_tz = pytz.timezone('US/Pacific')
         now = datetime.now(pacific_tz)
 
-        # Validate market hours and weekday
+        # Always manage connection regardless of market hours
+        if not self._is_connected():
+            self._establish_connection()
+        else:
+            self._maintain_connection()
+
+        # Track market hours for informational purposes
         market_status = self._get_market_status(now)
 
         # Update state
+        is_connected = self.client.isConnected() if self.client else False
         self.state_manager.set_state("connected", is_connected)
         self.state_manager.set_state("market_status", market_status)
 
@@ -40,10 +45,6 @@ class StocksConnectionManager(Command):
         logger.info(f"Connection: {'Connected' if is_connected else 'Disconnected'}")
         logger.info(f"Market Status: {market_status}")
         logger.info(f"Current PST time: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
-
-        # Attempt reconnection if needed
-        if not is_connected:
-            self._attempt_reconnection()
 
     def _get_market_status(self, now):
         """
@@ -73,47 +74,88 @@ class StocksConnectionManager(Command):
         hour = now.hour
         minute = now.minute
 
+        # Check conditions in proper order to avoid overlaps
         if hour < 5 or (hour == 5 and minute < 30):
             return "CLOSED"
         elif hour == 5 and minute >= 30:
             return "PRE_MARKET"
-        elif 6 <= hour < 13:
-            return "OPEN"
         elif hour == 6 and minute < 30:
             return "PRE_MARKET"
+        elif hour == 6 and minute >= 30:
+            return "OPEN"
+        elif 7 <= hour < 13:
+            return "OPEN"
         elif 13 <= hour < 17:
             return "AFTER_HOURS"
         else:
             return "CLOSED"
 
-    def _attempt_reconnection(self):
-        """Attempt to reconnect to IB Gateway"""
+    def _is_connected(self):
+        """Check if we have an active connection."""
+        return self.client.isConnected() if self.client else False
+
+    def _establish_connection(self):
+        """Establish initial connection to IB Gateway."""
         try:
+            logger.info("Establishing connection to IB Gateway")
+
             if self.client:
-                logger.info("Attempting to reconnect to IB Gateway...")
+                # Use the existing connection logic from IBClient
+                self.client.do_connect()
 
-                # Get connection parameters from config
-                host = self.state_manager.get_config_value(CONFIG_HOST)
-                port = self.state_manager.get_config_value(CONFIG_PORT)
-                client_id = self.state_manager.get_config_value(CONFIG_CLIENT_ID)
+                # Wait a moment for connection to establish
+                import time
+                time.sleep(2)
 
-                if not host or not port or not client_id:
-                    raise ValueError("Missing connection parameters in config")
-
-                # Attempt connection
-                self.client.connect(host, port, client_id)
-                logger.info("Reconnection attempt initiated")
-
-                # Send notification
-                self.state_manager.sendTelegramMessage(
-                    f"🔌 Stocks service reconnection attempt to {host}:{port}"
-                )
+                # Verify connection is working
+                if self._test_connection():
+                    logger.info("Connection established successfully")
+                    self.state_manager.sendTelegramMessage("✅ Stocks service connected to IB Gateway")
+                else:
+                    logger.warning("Connection attempt failed")
             else:
-                logger.error("No client available for reconnection")
+                logger.error("No client available for connection")
 
         except Exception as e:
-            logger.error(f"Reconnection failed: {e}")
-            self.state_manager.sendTelegramMessage(f"🚨 Stocks reconnection failed: {e}")
+            logger.error(f"Failed to establish connection: {e}")
+            self.state_manager.sendTelegramMessage(f"❌ Stocks service failed to connect: {type(e).__name__}")
+
+    def _maintain_connection(self):
+        """Maintain existing connection with health checks."""
+        try:
+            logger.debug("Performing connection health check")
+
+            # Use the existing connection check method
+            if self.client:
+                self.client.check_connection()
+
+        except Exception as e:
+            logger.error(f"Connection health check error: {e}")
+            self._handle_connection_loss()
+
+    def _test_connection(self):
+        """Test if the connection is actually working."""
+        try:
+            if self.client:
+                self.client.check_connection()
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"Connection test error: {e}")
+            return False
+
+    def _handle_connection_loss(self):
+        """Handle connection loss by attempting reconnection."""
+        logger.warning("Connection lost - attempting reconnection")
+
+        self.state_manager.sendTelegramMessage("⚠️ Stocks service connection lost - attempting reconnection")
+
+        # Attempt to reconnect
+        self._establish_connection()
+
+    def _attempt_reconnection(self):
+        """Legacy method - redirects to _establish_connection"""
+        self._establish_connection()
 
     def _validate_trading_permissions(self):
         """

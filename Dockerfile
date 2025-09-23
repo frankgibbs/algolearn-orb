@@ -20,6 +20,7 @@ RUN wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
   make install
 
 RUN rm -R ta-lib ta-lib-0.4.0-src.tar.gz
+WORKDIR /app
 
 # Copy requirements first for better caching
 COPY requirements.txt .

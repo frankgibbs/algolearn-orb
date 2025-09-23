@@ -185,22 +185,23 @@ class StocksStrategyService:
         Raises:
             ValueError: If bars is None or empty
         """
-        if not bars:
+        if bars is None or bars.empty:
             raise ValueError("bars is REQUIRED and cannot be empty")
 
-        logger.info(f"Calculating range from {len(bars)} bars")
-
-        # For single bar (opening range), use the bar's high/low
-        # For multiple bars, find the overall high/low
+        # Extract bar time information
         if len(bars) == 1:
             # Single bar - use its high/low directly
-            bar = bars[0]
-            range_high = float(bar.high)
-            range_low = float(bar.low)
+            bar = bars.iloc[0]
+            bar_time = bar['date']
+            range_high = float(bar['high'])
+            range_low = float(bar['low'])
         else:
-            # Multiple bars - find overall high/low
-            range_high = max(float(bar.high) for bar in bars)
-            range_low = min(float(bar.low) for bar in bars)
+            # Multiple bars - find overall high/low and use first bar's time
+            bar_time = bars.iloc[0]['date']
+            range_high = float(bars['high'].max())
+            range_low = float(bars['low'].min())
+
+        logger.info(f"Calculating range from {len(bars)} bars at {bar_time}")
 
         # Calculate derived values
         range_size = range_high - range_low
@@ -218,7 +219,8 @@ class StocksStrategyService:
             'range_size': range_size,
             'range_size_pct': range_size_pct,
             'range_mid': range_mid,
-            'bar_count': len(bars)
+            'bar_count': len(bars),
+            'bar_time': bar_time
         }
 
     def check_breakout_conditions(self, candidate, current_price, opening_range):
@@ -331,20 +333,38 @@ class StocksStrategyService:
 
         logger.info(f"Calculating {timeframe_minutes}m opening range for {symbol}")
 
-        # Fetch historical bar for opening period
+        # Calculate how many minutes since market open
+        pacific_tz = pytz.timezone('US/Pacific')
+        now = datetime.now(pacific_tz)
+        today = now.date()
+        market_open = datetime.combine(today, datetime.min.time().replace(hour=9, minute=30))
+        market_open = pacific_tz.localize(market_open)
+
+        # Calculate minutes since open
+        minutes_since_open = int((now - market_open).total_seconds() / 60)
+
+        # Need to fetch enough bars to include the opening range
+        # Add buffer to ensure we get the opening bars
+        duration_to_fetch = max(minutes_since_open + timeframe_minutes, timeframe_minutes * 2)
+
+        # Fetch bars (this will get bars from "now" going backwards)
         bar_size = f"{timeframe_minutes} mins"
         bars = self.client.get_stock_bars(
             symbol=symbol,
-            duration_minutes=timeframe_minutes,
+            duration_minutes=duration_to_fetch,
             bar_size=bar_size,
             timeout=10
         )
 
-        if not bars:
+        if bars is None or bars.empty:
             raise RuntimeError(f"No historical data received for {symbol}")
 
-        # Calculate range from bar(s)
-        range_data = self.calculate_range(bars)
+        # Use only the FIRST bar (which is the opening range bar)
+        # The bars are returned chronologically, so first bar = earliest = opening range
+        opening_bar = bars.iloc[0:1]  # Get first bar only
+
+        # Calculate range from the opening bar
+        range_data = self.calculate_range(opening_bar)
 
         # Validate range
         from src.stocks.stocks_config import get_stock_config
@@ -686,3 +706,32 @@ class StocksStrategyService:
         except Exception as e:
             logger.error(f"Error getting open orders: {e}")
             return []
+
+    def format_ranges_table(self, ranges):
+        """
+        Format opening ranges data as HTML table for Telegram
+
+        Args:
+            ranges: List of dicts with 'symbol' and 'range_size_pct' or 'range_pct' keys
+
+        Returns:
+            String with formatted HTML table
+        """
+        from prettytable import PrettyTable
+
+        if not ranges:
+            return "No ranges available"
+
+        # Create PrettyTable
+        table = PrettyTable()
+        table.field_names = ["Symbol", "Range %"]
+        table.align["Symbol"] = "l"
+        table.align["Range %"] = "r"
+
+        # Add rows for each range
+        for range_data in ranges:
+            # Handle both 'range_size_pct' (from command) and 'range_pct' (from database)
+            pct = range_data.get('range_size_pct') or range_data.get('range_pct', 0)
+            table.add_row([range_data['symbol'], f"{pct:.1f}%"])
+
+        return f"<pre>{table}</pre>"

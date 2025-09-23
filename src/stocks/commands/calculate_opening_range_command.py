@@ -35,9 +35,6 @@ class CalculateOpeningRangeCommand(Command):
         if timeframe_minutes is None:
             raise ValueError("CONFIG_ORB_TIMEFRAME not configured")
 
-        if not self._is_valid_calculation_time(now, timeframe_minutes):
-            raise RuntimeError(f"Opening range calculation called at invalid time: {now} for {timeframe_minutes}m ORB")
-
         # Initialize service
         strategy_service = StocksStrategyService(self.application_context)
 
@@ -51,7 +48,7 @@ class CalculateOpeningRangeCommand(Command):
                 valid_ranges.append(range_data)
 
         # Send notification
-        self._send_notification(valid_ranges, timeframe_minutes, now)
+        self._send_notification(valid_ranges, strategy_service)
 
     def _calculate_range_for_symbol(self, symbol, timeframe_minutes, strategy_service, now):
         """
@@ -90,10 +87,7 @@ class CalculateOpeningRangeCommand(Command):
             timeout=10
         )
 
-        if not bars:
-            raise RuntimeError(f"No bars received for {symbol}")
-
-        # Calculate range from single bar
+        # Calculate range from single bar (get_stock_bars already validates data)
         range_data = strategy_service.calculate_range(bars)
 
         # Validate range using stock-specific config
@@ -146,76 +140,28 @@ class CalculateOpeningRangeCommand(Command):
 
         return min_pct <= range_size_pct <= max_pct
 
-    def _is_valid_calculation_time(self, now, timeframe_minutes):
+    def _send_notification(self, valid_ranges, strategy_service):
         """
-        Check if current time is valid for opening range calculation
-
-        Args:
-            now: Current datetime in Pacific timezone (required)
-            timeframe_minutes: ORB timeframe (required)
-
-        Returns:
-            Boolean indicating if timing is valid
-
-        Raises:
-            ValueError: If any parameter is None
-        """
-        if now is None:
-            raise ValueError("now is REQUIRED")
-        if timeframe_minutes is None:
-            raise ValueError("timeframe_minutes is REQUIRED")
-
-        hour = now.hour
-        minute = now.minute
-
-        # Dynamic timing based on timeframe
-        if timeframe_minutes == 15:
-            # 15-min ORB: Calculate at 6:45-6:50 AM PST
-            return hour == 6 and 45 <= minute <= 50
-        elif timeframe_minutes == 30:
-            # 30-min ORB: Calculate at 7:00-7:05 AM PST
-            return hour == 7 and minute <= 5
-        elif timeframe_minutes == 60:
-            # 60-min ORB: Calculate at 7:30-7:35 AM PST
-            return hour == 7 and 30 <= minute <= 35
-        else:
-            raise ValueError(f"Unsupported timeframe: {timeframe_minutes} minutes")
-
-    def _send_notification(self, valid_ranges, timeframe_minutes, now):
-        """
-        Send Telegram notification with PrettyTable of valid ranges
+        Send Telegram notification with formatted table of valid ranges
 
         Args:
             valid_ranges: List of valid range dicts (required)
-            timeframe_minutes: ORB timeframe (required)
-            now: Current datetime (required)
+            strategy_service: Strategy service instance (required)
 
         Raises:
             ValueError: If any parameter is None
         """
         if valid_ranges is None:
             raise ValueError("valid_ranges is REQUIRED")
-        if timeframe_minutes is None:
-            raise ValueError("timeframe_minutes is REQUIRED")
-        if now is None:
-            raise ValueError("now is REQUIRED")
+        if strategy_service is None:
+            raise ValueError("strategy_service is REQUIRED")
 
         if not valid_ranges:
             # No valid ranges calculated
-            message = f"No valid {timeframe_minutes}m opening ranges calculated"
+            message = "No valid opening ranges calculated"
             self.state_manager.sendTelegramMessage(message)
             return
 
-        # Create PrettyTable
-        table = PrettyTable()
-        table.field_names = ["Symbol", "Range %"]
-        table.align["Symbol"] = "l"
-        table.align["Range %"] = "r"
-
-        # Add rows for each valid range
-        for range_data in valid_ranges:
-            table.add_row([range_data['symbol'], f"{range_data['range_size_pct']:.1f}%"])
-
-        # Send table with <pre> formatting
-        message = f"<pre>{table}</pre>"
+        # Use shared formatting method
+        message = strategy_service.format_ranges_table(valid_ranges)
         self.state_manager.sendTelegramMessage(message)

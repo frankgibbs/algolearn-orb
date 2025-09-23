@@ -119,6 +119,33 @@ class StocksMcpApi:
                         "required": []
                     }
                 ),
+                Tool(
+                    name="get_opening_ranges",
+                    description="Monitor and retrieve opening ranges from database for ORB strategy",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "date": {
+                                "type": "string",
+                                "description": "Date to query (YYYY-MM-DD format, defaults to today PST)",
+                                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                            },
+                            "include_all": {
+                                "type": "boolean",
+                                "description": "Include all ranges in database for debugging",
+                                "default": False
+                            },
+                            "days_back": {
+                                "type": "integer",
+                                "description": "Number of days back to include",
+                                "default": 1,
+                                "minimum": 1,
+                                "maximum": 30
+                            }
+                        },
+                        "required": []
+                    }
+                ),
             ]
 
         @self.server.call_tool()
@@ -132,6 +159,8 @@ class StocksMcpApi:
                     return await self._get_current_candidates(arguments or {})
                 elif name == "get_scanner_types":
                     return await self._get_scanner_types(arguments or {})
+                elif name == "get_opening_ranges":
+                    return await self._get_opening_ranges(arguments or {})
                 else:
                     raise ValueError(f"Unknown tool: {name}")
             except Exception as e:
@@ -315,6 +344,128 @@ class StocksMcpApi:
             logger.error(f"Error getting scanner types: {e}")
             return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
 
+    async def _get_opening_ranges(self, args: dict) -> list[TextContent]:
+        """Monitor and retrieve opening ranges from database"""
+        try:
+            import pytz
+            from datetime import datetime, timedelta
+
+            # Get parameters
+            date_str = args.get("date")
+            include_all = args.get("include_all", False)
+            days_back = args.get("days_back", 1)
+
+            # Get current PST time
+            pst_tz = pytz.timezone('US/Pacific')
+            now_pst = datetime.now(pst_tz)
+            today_pst = now_pst.date()
+
+            # Parse target date or use today
+            if date_str:
+                from datetime import datetime as dt
+                target_date = dt.strptime(date_str, '%Y-%m-%d').date()
+            else:
+                target_date = today_pst
+
+            # Query ranges for target date
+            ranges_for_date = self.database_manager.get_opening_ranges_by_date(target_date)
+
+            # Get all ranges if requested
+            all_ranges = []
+            if include_all:
+                # Query all ranges in database
+                session = self.database_manager.get_session()
+                try:
+                    from src.stocks.models.opening_range import OpeningRange
+                    all_ranges = session.query(OpeningRange).order_by(OpeningRange.date.desc()).limit(100).all()
+                finally:
+                    session.close()
+
+            # Get recent ranges (last N days)
+            recent_ranges = []
+            for i in range(days_back):
+                check_date = today_pst - timedelta(days=i)
+                ranges_on_date = self.database_manager.get_opening_ranges_by_date(check_date)
+                for r in ranges_on_date:
+                    recent_ranges.append({
+                        'symbol': r.symbol,
+                        'date': r.date.isoformat(),
+                        'timeframe_minutes': r.timeframe_minutes,
+                        'range_high': r.range_high,
+                        'range_low': r.range_low,
+                        'range_size': r.range_size,
+                        'range_size_pct': r.range_size_pct,
+                        'created_at': r.created_at.isoformat() if r.created_at else None
+                    })
+
+            # Format target date ranges
+            target_ranges = []
+            for r in ranges_for_date:
+                target_ranges.append({
+                    'symbol': r.symbol,
+                    'date': r.date.isoformat(),
+                    'timeframe_minutes': r.timeframe_minutes,
+                    'range_high': r.range_high,
+                    'range_low': r.range_low,
+                    'range_size': r.range_size,
+                    'range_size_pct': r.range_size_pct,
+                    'created_at': r.created_at.isoformat() if r.created_at else None
+                })
+
+            # Build result
+            result = {
+                "timestamp": now_pst.isoformat(),
+                "current_pst_time": now_pst.strftime('%Y-%m-%d %H:%M:%S %Z'),
+                "today_pst_date": today_pst.isoformat(),
+                "query_info": {
+                    "target_date": target_date.isoformat(),
+                    "days_back_requested": days_back,
+                    "include_all_requested": include_all
+                },
+                "ranges_for_target_date": {
+                    "count": len(target_ranges),
+                    "ranges": target_ranges
+                },
+                "recent_ranges": {
+                    "count": len(recent_ranges),
+                    "ranges": recent_ranges
+                }
+            }
+
+            # Add all ranges if requested
+            if include_all:
+                all_ranges_data = []
+                for r in all_ranges:
+                    all_ranges_data.append({
+                        'symbol': r.symbol,
+                        'date': r.date.isoformat(),
+                        'timeframe_minutes': r.timeframe_minutes,
+                        'range_high': r.range_high,
+                        'range_low': r.range_low,
+                        'range_size': r.range_size,
+                        'range_size_pct': r.range_size_pct,
+                        'created_at': r.created_at.isoformat() if r.created_at else None
+                    })
+
+                result["all_ranges"] = {
+                    "count": len(all_ranges_data),
+                    "ranges": all_ranges_data[:50]  # Limit to first 50 for display
+                }
+
+            # Add summary
+            result["summary"] = {
+                "ranges_today": len([r for r in recent_ranges if r['date'] == today_pst.isoformat()]),
+                "total_recent_ranges": len(recent_ranges),
+                "unique_symbols_recent": len(set(r['symbol'] for r in recent_ranges)),
+                "date_match": target_date == today_pst,
+                "database_has_data": len(recent_ranges) > 0 or (include_all and len(all_ranges) > 0)
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_opening_ranges: {e}")
+            return [TextContent(type="text", text=f"Error getting opening ranges: {str(e)}", meta={})]
 
     def run(self, host="0.0.0.0", port=8003):
         """Run the MCP server with both HTTP endpoints and MCP protocol support"""
@@ -346,7 +497,8 @@ class StocksMcpApi:
                 "available_tools": [
                     "run_pre_market_scan",
                     "get_current_candidates",
-                    "get_scanner_types"
+                    "get_scanner_types",
+                    "get_opening_ranges"
                 ]
             }
 
@@ -437,6 +589,29 @@ class StocksMcpApi:
                                         "properties": {}
                                     }
                                 },
+                                {
+                                    "name": "get_opening_ranges",
+                                    "description": "Monitor and retrieve opening ranges from database for ORB strategy",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "date": {
+                                                "type": "string",
+                                                "description": "Date to query (YYYY-MM-DD format, defaults to today PST)"
+                                            },
+                                            "include_all": {
+                                                "type": "boolean",
+                                                "description": "Include all ranges in database for debugging",
+                                                "default": False
+                                            },
+                                            "days_back": {
+                                                "type": "integer",
+                                                "description": "Number of days back to include",
+                                                "default": 1
+                                            }
+                                        }
+                                    }
+                                },
                             ]
                         }
                     }
@@ -453,6 +628,8 @@ class StocksMcpApi:
                         result = await self._get_current_candidates(arguments)
                     elif tool_name == "get_scanner_types":
                         result = await self._get_scanner_types(arguments)
+                    elif tool_name == "get_opening_ranges":
+                        result = await self._get_opening_ranges(arguments)
                     else:
                         return {
                             "jsonrpc": "2.0",
