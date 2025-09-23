@@ -229,12 +229,23 @@ def main():
     state_manager = State(client, subject, config)
     application_context = ApplicationContext(state_manager)
 
-    # Initialize all managers
+    # Initialize database_manager FIRST so commands can access it
+    database_manager = StocksDatabaseManager(application_context)
+    application_context.database_manager = database_manager
+
+    # Initialize all other managers
     stocks_service = StocksService(application_context)
     trade_manager = StocksTradeManager(application_context)
     telegram_manager = StocksTelegramManager(application_context)
-    database_manager = StocksDatabaseManager(application_context)
-    application_context.database_manager = database_manager
+
+    # Start Telegram bot in background thread
+    telegram_thread = threading.Thread(
+        target=telegram_manager.start,
+        daemon=True,
+        name="TelegramBot"
+    )
+    telegram_thread.start()
+    logger.info("Telegram bot started in background thread")
 
     # Start the system
     subject.notify({FIELD_TYPE: EVENT_TYPE_START})

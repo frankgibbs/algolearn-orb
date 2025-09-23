@@ -14,4 +14,5 @@ python stocks.py \
   --max-positions $MAX_POSITIONS \
   --min-price $MIN_PRICE \
   --max-price $MAX_PRICE \
-  --min-volume $MIN_VOLUME
+  --min-volume $MIN_VOLUME \
+  --stagnation-minutes $STAGNATION_MINUTES

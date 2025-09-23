@@ -2,6 +2,16 @@ from src.core.observer import IObserver
 from src.core.constants import *
 from src import logger
 
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+from telegram import ParseMode
+from prettytable import PrettyTable
+import requests
+import urllib
+from io import BytesIO
+from datetime import datetime
+import pytz
+import threading
+
 class StocksTelegramManager(IObserver):
     """Handles Telegram notifications for stock trading"""
 
@@ -34,6 +44,182 @@ class StocksTelegramManager(IObserver):
         except Exception as e:
             logger.error(f"Error in StocksTelegramManager.notify: {e}")
 
+    def start(self):
+        """Start Telegram bot with command handlers - v13.5 pattern"""
+        token = self.state_manager.getConfigValue(CONFIG_TELEGRAM_TOKEN)
+        if token is None:
+            logger.warning("CONFIG_TELEGRAM_TOKEN not configured, Telegram bot disabled")
+            return
+
+        try:
+            # v13.5 uses Updater with use_context=True
+            updater = Updater(token, use_context=True)
+
+            # Get the dispatcher to register handlers
+            dp = updater.dispatcher
+
+            # Register command handlers - v13.5 style
+            dp.add_handler(CommandHandler("plot", self.send_plot))
+            dp.add_handler(CommandHandler("ranges", self.send_ranges))
+            dp.add_handler(CommandHandler("pnl", self.send_pnl))
+            dp.add_handler(CommandHandler("orders", self.send_orders))
+
+            # Add error handler
+            dp.add_error_handler(self.error)
+
+            logger.info("Starting Telegram bot...")
+            # Start the Bot
+            updater.start_polling()
+            logger.info("Telegram bot started successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to start Telegram bot: {e}")
+
+    def send_plot(self, update, context):
+        """Handle /plot [symbol] command"""
+        try:
+            symbol = None
+            if context.args:
+                symbol = context.args[0].upper()
+            else:
+                update.message.reply_text("Usage: /plot SYMBOL")
+                return
+
+            # Get data from service
+            from src.stocks.services.stocks_strategy_service import StocksStrategyService
+            from src.stocks.services.stocks_chart_service import StocksChartService
+
+            strategy_service = StocksStrategyService(self.application_context)
+            plot_data = strategy_service.get_plot_data(symbol)
+
+            if plot_data is None or plot_data.empty:
+                update.message.reply_text(f"No data available for {symbol}")
+                return
+
+            # Generate chart
+            chart_service = StocksChartService()
+            buf = chart_service.generate_candlestick_chart(plot_data, symbol)
+
+            # Send photo using v13.5 method
+            context.bot.sendPhoto(
+                chat_id=update.effective_chat.id,
+                photo=buf,
+                caption=f"📊 {symbol} - {datetime.now().strftime('%Y-%m-%d')}"
+            )
+
+        except Exception as e:
+            logger.error(f"Error in send_plot: {e}", exc_info=True)
+            update.message.reply_text(f"Error: {str(e)}")
+
+    def send_ranges(self, update, context):
+        """Handle /ranges command"""
+        try:
+            # Get data from service
+            from src.stocks.services.stocks_strategy_service import StocksStrategyService
+            strategy_service = StocksStrategyService(self.application_context)
+            ranges = strategy_service.get_opening_ranges_summary()
+
+            if not ranges:
+                update.message.reply_text("No opening ranges calculated today")
+                return
+
+            # Format as PrettyTable
+            table = PrettyTable(['Symbol', 'Range %'])
+            table.align['Symbol'] = 'l'
+            table.align['Range %'] = 'r'
+
+            for r in ranges:
+                table.add_row([r['symbol'], f"{r['range_pct']:.1f}%"])
+
+            # Send using v13.5 parse_mode
+            update.message.reply_text(
+                f'📏 Opening Ranges\n<pre>{table}</pre>',
+                parse_mode=ParseMode.HTML
+            )
+
+        except Exception as e:
+            logger.error(f"Error in send_ranges: {e}", exc_info=True)
+            update.message.reply_text(f"Error: {str(e)}")
+
+    def send_pnl(self, update, context):
+        """Handle /pnl command"""
+        try:
+            # Get data from service
+            from src.stocks.services.stocks_strategy_service import StocksStrategyService
+            strategy_service = StocksStrategyService(self.application_context)
+            positions = strategy_service.get_positions_pnl()
+
+            if not positions:
+                update.message.reply_text("No open positions")
+                return
+
+            # Format as PrettyTable
+            table = PrettyTable(['Symbol', 'Qty', 'P&L'])
+            table.align['Symbol'] = 'l'
+            table.align['Qty'] = 'r'
+            table.align['P&L'] = 'r'
+
+            total_pnl = 0
+            for p in positions:
+                # Format qty with +/- based on direction
+                qty_str = f"+{p['shares']}" if p['direction'] == 'LONG' else f"-{p['shares']}"
+                pnl_str = f"${p['unrealized_pnl']:.2f}"
+                table.add_row([p['symbol'], qty_str, pnl_str])
+                total_pnl += p['unrealized_pnl']
+
+            # Add total row
+            table.add_row(['---', '---', '---'])
+            table.add_row(['TOTAL', '', f"${total_pnl:.2f}"])
+
+            # Send using v13.5 parse_mode
+            emoji = "📈" if total_pnl >= 0 else "📉"
+            update.message.reply_text(
+                f'{emoji} Open Positions P&L\n<pre>{table}</pre>',
+                parse_mode=ParseMode.HTML
+            )
+
+        except Exception as e:
+            logger.error(f"Error in send_pnl: {e}", exc_info=True)
+            update.message.reply_text(f"Error: {str(e)}")
+
+    def send_orders(self, update, context):
+        """Handle /orders command"""
+        try:
+            # Get data from service
+            from src.stocks.services.stocks_strategy_service import StocksStrategyService
+            strategy_service = StocksStrategyService(self.application_context)
+            orders = strategy_service.get_open_orders_summary()
+
+            if not orders:
+                update.message.reply_text("No open orders")
+                return
+
+            # Format as PrettyTable
+            table = PrettyTable(['ID', 'Symbol', 'Qty', 'Type'])
+            table.align['ID'] = 'r'
+            table.align['Symbol'] = 'l'
+            table.align['Qty'] = 'r'
+            table.align['Type'] = 'l'
+
+            for o in orders:
+                # Format qty with +/- based on action
+                qty_str = f"+{o['quantity']}" if o['action'] == 'BUY' else f"-{o['quantity']}"
+                table.add_row([o['order_id'], o['symbol'], qty_str, o['type']])
+
+            # Send using v13.5 parse_mode
+            update.message.reply_text(
+                f'📋 Open Orders\n<pre>{table}</pre>',
+                parse_mode=ParseMode.HTML
+            )
+
+        except Exception as e:
+            logger.error(f"Error in send_orders: {e}", exc_info=True)
+            update.message.reply_text(f"Error: {str(e)}")
+
+    def error(self, update, context):
+        """Log Errors caused by Updates - v13.5 pattern"""
+        logger.error('Update "%s" caused error "%s"', update, context.error)
+
     def _send_message(self, message):
         """Send message via Telegram"""
         if not message:
@@ -41,9 +227,21 @@ class StocksTelegramManager(IObserver):
             return
 
         try:
-            # TODO: Implement actual Telegram sending logic
-            # For now, just log the message
-            logger.info(f"Telegram (Stocks): {message}")
+            # Now actually send via Telegram API
+            token = self.state_manager.getConfigValue(CONFIG_TELEGRAM_TOKEN)
+            chat_id = self.state_manager.getConfigValue(CONFIG_TELEGRAM_CHAT_ID)
+
+            if token and chat_id:
+                url = f"https://api.telegram.org/bot{token}/sendMessage"
+                params = {
+                    "chat_id": chat_id,
+                    "text": message,
+                    "parse_mode": "HTML"
+                }
+                requests.get(url, params=params)
+            else:
+                # Fallback to logging if not configured
+                logger.info(f"Telegram (Stocks): {message}")
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
 

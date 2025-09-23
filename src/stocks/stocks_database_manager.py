@@ -144,6 +144,28 @@ class StocksDatabaseManager(IObserver):
         finally:
             session.close()
 
+    def get_opening_ranges_by_date(self, date):
+        """
+        Get all opening ranges for a specific date
+
+        Args:
+            date: Date to query (required)
+
+        Returns:
+            List of OpeningRange objects
+
+        Raises:
+            ValueError: If date is None
+        """
+        if date is None:
+            raise ValueError("date is REQUIRED")
+
+        session = self.get_session()
+        try:
+            return session.query(OpeningRange).filter_by(date=date).all()
+        finally:
+            session.close()
+
     # Stock Candidate operations
     def save_candidates(self, candidates_data, scan_date):
         """

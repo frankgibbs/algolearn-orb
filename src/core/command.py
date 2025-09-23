@@ -15,6 +15,8 @@ class Command(ABC):
         self.application_context = application_context
         # Keep state_manager for backward compatibility during transition
         self.state_manager = application_context.state_manager
+        # Add database_manager access for commands that need it
+        self.database_manager = getattr(application_context, 'database_manager', None)
 
     @abstractmethod
     def execute(self, event):

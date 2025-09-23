@@ -534,3 +534,155 @@ class StocksStrategyService:
 
         logger.debug(f"Current open positions count: {open_positions}")
         return open_positions
+
+    # Telegram command support methods
+
+    def get_plot_data(self, symbol):
+        """
+        Get OHLC data for plotting
+
+        Args:
+            symbol: Stock symbol (required)
+
+        Returns:
+            DataFrame with OHLC data for plotting
+
+        Raises:
+            ValueError: If symbol is None
+            RuntimeError: If no data available
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+
+        logger.info(f"Getting plot data for {symbol}")
+
+        # Get timeframe from config
+        timeframe = self.state_manager.get_config_value(CONFIG_ORB_TIMEFRAME)
+        if timeframe is None:
+            timeframe = 30  # Default to 30 minutes
+
+        # Get data for full trading day with specified timeframe
+        bars = self.client.get_stock_bars(
+            symbol=symbol,
+            duration_minutes=390,  # Full trading day (6.5 hours)
+            bar_size=f"{timeframe} mins"
+        )
+
+        if bars is None or bars.empty:
+            raise RuntimeError(f"No data available for {symbol}")
+
+        return bars
+
+    def get_opening_ranges_summary(self, date=None):
+        """
+        Get today's opening ranges for display
+
+        Args:
+            date: Date to query (optional, defaults to today)
+
+        Returns:
+            List of dicts with symbol and range_pct
+        """
+        if date is None:
+            date = datetime.now(pytz.timezone('US/Pacific')).date()
+
+        logger.info(f"Getting opening ranges for {date}")
+
+        # Query database for opening ranges
+        ranges = self.database_manager.get_opening_ranges_by_date(date)
+
+        result = []
+        for r in ranges:
+            result.append({
+                'symbol': r.symbol,
+                'range_pct': r.range_size_pct
+            })
+
+        return result
+
+    def get_positions_pnl(self):
+        """
+        Get P&L for all open positions
+
+        Returns:
+            List of dicts with position data and current P&L
+        """
+        logger.info("Getting positions P&L")
+
+        # Get open positions from database
+        open_positions = self.database_manager.get_open_positions()
+
+        result = []
+        for p in open_positions:
+            try:
+                # Get current price from IB
+                current_price = self.client.get_stock_price(p.symbol)
+
+                if current_price is None:
+                    logger.warning(f"Could not get current price for {p.symbol}")
+                    current_price = p.entry_price  # Fallback to entry price
+
+                # Calculate unrealized P&L
+                if p.direction == 'LONG':
+                    unrealized_pnl = (current_price - p.entry_price) * p.shares
+                else:  # SHORT
+                    unrealized_pnl = (p.entry_price - current_price) * p.shares
+
+                result.append({
+                    'symbol': p.symbol,
+                    'direction': p.direction,
+                    'shares': p.shares,
+                    'entry_price': p.entry_price,
+                    'current_price': current_price,
+                    'unrealized_pnl': unrealized_pnl
+                })
+
+            except Exception as e:
+                logger.error(f"Error calculating P&L for {p.symbol}: {e}")
+                # Add position with zero P&L on error
+                result.append({
+                    'symbol': p.symbol,
+                    'direction': p.direction,
+                    'shares': p.shares,
+                    'entry_price': p.entry_price,
+                    'current_price': p.entry_price,
+                    'unrealized_pnl': 0.0
+                })
+
+        return result
+
+    def get_open_orders_summary(self):
+        """
+        Get summary of open orders from IB
+
+        Returns:
+            List of dicts with order information
+        """
+        logger.info("Getting open orders summary")
+
+        try:
+            # Get orders from IB
+            ib_orders = self.client.get_open_orders()
+
+            result = []
+            for order_id, order_data in ib_orders.items():
+                # Extract contract symbol
+                contract = order_data.get('contract')
+                symbol = 'N/A'
+                if contract and hasattr(contract, 'symbol'):
+                    symbol = contract.symbol
+
+                result.append({
+                    'order_id': order_data.get('orderId', order_id),
+                    'symbol': symbol,
+                    'action': order_data.get('action', 'N/A'),
+                    'quantity': order_data.get('totalQuantity', 0),
+                    'type': order_data.get('orderType', 'N/A'),
+                    'status': order_data.get('orderState', 'N/A')
+                })
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error getting open orders: {e}")
+            return []
