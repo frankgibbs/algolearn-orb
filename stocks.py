@@ -44,21 +44,38 @@ class StocksService(IObserver):
         # Pre-market scanning at 5:30 AM PST (8:30 AM ET)
         schedule.every().day.at("05:30").do(self.pre_market_scan)
 
-        # Opening range calculation at 7:00 AM PST (10:00 AM ET)
-        schedule.every().day.at("07:00").do(self.calculate_opening_range)
+        # Opening range calculation - dynamic based on CONFIG_ORB_TIMEFRAME
+        # 15m ORB → 6:45 AM, 30m ORB → 7:00 AM, 60m ORB → 7:30 AM
+        orb_timeframe = self.state_manager.get_config_value(CONFIG_ORB_TIMEFRAME)
+        if orb_timeframe == 15:
+            schedule.every().day.at("06:45").do(self.calculate_opening_range)
+        elif orb_timeframe == 30:
+            schedule.every().day.at("07:00").do(self.calculate_opening_range)
+        elif orb_timeframe == 60:
+            schedule.every().day.at("07:30").do(self.calculate_opening_range)
+        else:
+            raise ValueError(f"Invalid CONFIG_ORB_TIMEFRAME: {orb_timeframe}. Must be 15, 30, or 60")
 
-        # ORB strategy checks every 30 minutes from 7:00 AM - 12:00 PM PST
-        schedule.every().day.at("07:00").do(self.orb_strategy)
-        schedule.every().day.at("07:30").do(self.orb_strategy)
-        schedule.every().day.at("08:00").do(self.orb_strategy)
-        schedule.every().day.at("08:30").do(self.orb_strategy)
-        schedule.every().day.at("09:00").do(self.orb_strategy)
-        schedule.every().day.at("09:30").do(self.orb_strategy)
-        schedule.every().day.at("10:00").do(self.orb_strategy)
-        schedule.every().day.at("10:30").do(self.orb_strategy)
-        schedule.every().day.at("11:00").do(self.orb_strategy)
-        schedule.every().day.at("11:30").do(self.orb_strategy)
-        schedule.every().day.at("12:00").do(self.orb_strategy)
+        # ORB strategy checks - dynamic based on CONFIG_ORB_TIMEFRAME
+        # Run on clock-aligned intervals from after opening range until 12:50 PM PST
+        if orb_timeframe == 15:
+            # Check every 15 minutes starting after 6:45 AM
+            for hour in range(7, 13):  # 7 AM to 12 PM
+                for minute in [0, 15, 30, 45]:
+                    if hour == 12 and minute > 45:  # Stop before EOD exit at 12:50
+                        break
+                    schedule.every().day.at(f"{hour:02d}:{minute:02d}").do(self.orb_strategy)
+        elif orb_timeframe == 30:
+            # Check every 30 minutes starting after 7:00 AM
+            for hour in range(7, 13):  # 7 AM to 12 PM
+                for minute in [0, 30]:
+                    if hour == 12 and minute > 30:  # Stop before EOD exit at 12:50
+                        break
+                    schedule.every().day.at(f"{hour:02d}:{minute:02d}").do(self.orb_strategy)
+        elif orb_timeframe == 60:
+            # Check every hour starting after 7:30 AM
+            for hour in range(8, 13):  # 8 AM to 12 PM
+                schedule.every().day.at(f"{hour:02d}:00").do(self.orb_strategy)
 
         # Position state transitions every 30 seconds
         schedule.every(30).seconds.do(self.manage_positions)
@@ -171,6 +188,11 @@ def main():
     parser.add_argument("--min-price", required=True, type=float, help="Minimum stock price")
     parser.add_argument("--max-price", required=True, type=float, help="Maximum stock price")
     parser.add_argument("--min-volume", required=True, type=int, help="Minimum daily volume")
+    parser.add_argument("--stagnation-minutes", required=True, type=int, help="Minutes before position is considered stagnant")
+    parser.add_argument("--trailing-stop-ratio", type=float, default=0.5, help="Trailing stop ratio (default: 0.5)")
+    parser.add_argument("--take-profit-ratio", type=float, default=1.5, help="Take profit ratio (default: 1.5)")
+    parser.add_argument("--min-range-pct", type=float, default=0.5, help="Minimum opening range %% (default: 0.5)")
+    parser.add_argument("--max-range-pct", type=float, default=3.0, help="Maximum opening range %% (default: 3.0)")
 
     args = parser.parse_args()
 
@@ -195,7 +217,12 @@ def main():
         CONFIG_MAX_POSITIONS: args.max_positions,
         CONFIG_MIN_PRICE: args.min_price,
         CONFIG_MAX_PRICE: args.max_price,
-        CONFIG_MIN_VOLUME: args.min_volume
+        CONFIG_MIN_VOLUME: args.min_volume,
+        CONFIG_STAGNATION_THRESHOLD_MINUTES: args.stagnation_minutes,
+        CONFIG_TRAILING_STOP_RATIO: args.trailing_stop_ratio,
+        CONFIG_TAKE_PROFIT_RATIO: args.take_profit_ratio,
+        CONFIG_MIN_RANGE_PCT: args.min_range_pct,
+        CONFIG_MAX_RANGE_PCT: args.max_range_pct
     }
 
     client = IBClient(subject, config)

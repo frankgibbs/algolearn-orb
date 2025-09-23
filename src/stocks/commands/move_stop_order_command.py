@@ -89,7 +89,7 @@ class MoveStopOrderCommand(Command):
             raise ValueError("current_price is REQUIRED")
 
         # Get trailing stop ratio from config
-        trailing_ratio = self.state_manager.getConfigValue(CONFIG_TRAILING_STOP_RATIO, 0.5)
+        trailing_ratio = self.state_manager.get_config_value(CONFIG_TRAILING_STOP_RATIO)
 
         # If not trailing yet, check if take profit level reached
         if not position.stop_moved:

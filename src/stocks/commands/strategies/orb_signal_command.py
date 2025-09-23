@@ -43,7 +43,8 @@ class ORBSignalCommand(Command):
 
         # Initialize services
         strategy_service = StocksStrategyService(self.application_context)
-        ib_client = IBClient(self.application_context)
+        # Use the IBClient instance from application context (maintains connection)
+        ib_client = self.application_context.client
 
         logger.info(f"Analyzing {len(STOCK_SYMBOLS)} stocks for ORB breakout signals")
 
@@ -55,6 +56,10 @@ class ORBSignalCommand(Command):
                     signals_generated += 1
             except Exception as e:
                 logger.error(f"Error analyzing stock {symbol}: {e}")
+                # Send notification immediately
+                self.state_manager.sendTelegramMessage(
+                    f"⚠️ ORB Signal Error for {symbol}: {str(e)[:100]}"
+                )
                 # Continue with other stocks
 
         logger.info(f"ORB signal detection complete. Generated {signals_generated} signals")
@@ -84,37 +89,29 @@ class ORBSignalCommand(Command):
         if now is None:
             raise ValueError("now is REQUIRED")
 
-        try:
-            # Get opening range for this stock
-            opening_range = strategy_service.get_opening_range(symbol, now.date())
-        except RuntimeError as e:
-            logger.warning(f"No opening range found for {symbol}: {e}")
-            return False
+        # Get opening range for this stock - let exception propagate
+        opening_range = strategy_service.get_opening_range(symbol, now.date())
+        if not opening_range:
+            raise RuntimeError(f"No opening range found for {symbol}")
 
         # Get timeframe from configuration
         timeframe_minutes = self.state_manager.get_config_value(CONFIG_ORB_TIMEFRAME)
         if timeframe_minutes is None:
             raise ValueError("CONFIG_ORB_TIMEFRAME not configured")
 
-        # Get previous bar data to check for breakout
-        try:
-            bars_df = ib_client.get_stock_bars(
-                symbol=symbol,
-                duration_minutes=timeframe_minutes * 2,  # Get enough data
-                bar_size=f"{timeframe_minutes} mins"
-            )
+        # Get previous bar data to check for breakout - let exceptions propagate
+        bars_df = ib_client.get_stock_bars(
+            symbol=symbol,
+            duration_minutes=timeframe_minutes * 2,  # Get enough data
+            bar_size=f"{timeframe_minutes} mins"
+        )
 
-            if bars_df is None or len(bars_df) < 2:
-                logger.warning(f"Insufficient bar data for {symbol}")
-                return False
+        if bars_df is None or len(bars_df) < 2:
+            raise RuntimeError(f"Insufficient bar data for {symbol}: got {len(bars_df) if bars_df is not None else 0} bars, need at least 2")
 
-            # Get the previous completed bar (not the current incomplete one)
-            previous_bar = bars_df.iloc[-2]
-            previous_close = previous_bar['close']
-
-        except Exception as e:
-            logger.warning(f"Cannot get bar data for {symbol}: {e}")
-            return False
+        # Get the previous completed bar (not the current incomplete one)
+        previous_bar = bars_df.iloc[-2]
+        previous_close = previous_bar['close']
 
         # Check breakout conditions: previous candle closed above/below range
         breakout_signal = self._check_breakout_signal(opening_range, previous_close)
@@ -126,7 +123,7 @@ class ORBSignalCommand(Command):
                 return False
 
             # Publish position opening signal
-            self._publish_position_signal(symbol, breakout_signal, opening_range)
+            self._publish_position_signal(symbol, breakout_signal, opening_range, ib_client)
             return True
 
         return False
@@ -181,7 +178,7 @@ class ORBSignalCommand(Command):
             # No breakout
             return {'signal': 'NONE'}
 
-    def _publish_position_signal(self, symbol, breakout_signal, opening_range):
+    def _publish_position_signal(self, symbol, breakout_signal, opening_range, ib_client):
         """
         Publish EVENT_TYPE_OPEN_POSITION event for execution
 
@@ -189,10 +186,16 @@ class ORBSignalCommand(Command):
             symbol: Stock symbol
             breakout_signal: Breakout signal data
             opening_range: Opening range record
+            ib_client: IBClient instance from application context
         """
         # Calculate position size based on account risk
-        account_value = self.state_manager.get_config_value('account_value') or 100000
-        risk_pct = self.state_manager.get_config_value(CONFIG_RISK_PERCENTAGE) or 1.0
+        # Get real account value from IB (no silent defaults)
+        account_value = ib_client.get_pair_balance("USD")
+        if account_value is None or account_value <= 0:
+            raise RuntimeError(f"Cannot get account value from IB or account empty: {account_value}")
+        risk_pct = self.state_manager.get_config_value(CONFIG_RISK_PERCENTAGE)
+        if risk_pct is None or risk_pct <= 0:
+            raise ValueError("CONFIG_RISK_PERCENTAGE is REQUIRED and must be positive")
 
         risk_amount = account_value * (risk_pct / 100)
         price_diff = abs(breakout_signal['entry_price'] - breakout_signal['stop_loss'])

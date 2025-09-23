@@ -53,7 +53,8 @@ class OpenPositionCommand(Command):
         #     return
 
         # Initialize clients
-        ib_client = IBClient(self.application_context)
+        # Use the IBClient instance from application context (maintains connection)
+        ib_client = self.application_context.client
         database_manager = StocksDatabaseManager(self.application_context)
 
         # Execute the trade

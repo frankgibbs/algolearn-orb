@@ -68,8 +68,10 @@ class TimeBasedExitCommand(Command):
         time_open = now - position.entry_time
         minutes_open = time_open.total_seconds() / 60
 
-        # Check if position has been open longer than threshold (90 minutes)
-        stagnation_threshold = 90  # minutes
+        # Get stagnation threshold from configuration
+        stagnation_threshold = self.state_manager.get_config_value(CONFIG_STAGNATION_THRESHOLD_MINUTES)
+        if stagnation_threshold is None:
+            raise ValueError("CONFIG_STAGNATION_THRESHOLD_MINUTES is REQUIRED")
 
         if minutes_open > stagnation_threshold:
             # Get current price to check if position is stagnant

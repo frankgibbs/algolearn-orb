@@ -401,7 +401,9 @@ class StocksStrategyService:
         range_size = range_high - range_low
 
         # Get take profit and trailing stop ratios from config
-        tp_ratio = self.state_manager.get_config_value(CONFIG_TAKE_PROFIT_RATIO) or 1.5
+        tp_ratio = self.state_manager.get_config_value(CONFIG_TAKE_PROFIT_RATIO)
+        if tp_ratio is None:
+            raise ValueError("CONFIG_TAKE_PROFIT_RATIO not configured - cannot use default values for trading parameters")
 
         signal = 'NONE'
         entry_price = current_price
@@ -520,15 +522,15 @@ class StocksStrategyService:
 
         Returns:
             Integer count of open positions
-        """
-        try:
-            # Query positions with status 'OPEN' or 'PENDING'
-            open_positions = self.database_manager.session.query(Position).filter(
-                Position.status.in_(['OPEN', 'PENDING'])
-            ).count()
 
-            logger.debug(f"Current open positions count: {open_positions}")
-            return open_positions
-        except Exception as e:
-            logger.error(f"Error getting open positions count: {e}")
-            return 0
+        Raises:
+            RuntimeError: If database query fails
+        """
+        # Query positions with status 'OPEN' or 'PENDING'
+        # Let exceptions propagate per CLAUDE.md pattern
+        open_positions = self.database_manager.session.query(Position).filter(
+            Position.status.in_(['OPEN', 'PENDING'])
+        ).count()
+
+        logger.debug(f"Current open positions count: {open_positions}")
+        return open_positions

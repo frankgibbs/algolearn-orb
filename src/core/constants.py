@@ -152,6 +152,7 @@ CONFIG_TRAILING_STOP_RATIO = "trailing_stop_ratio"  # 0.5x of range
 CONFIG_TAKE_PROFIT_RATIO = "take_profit_ratio"  # 1.5x of range
 CONFIG_STOCK_LIST = "stock_list"  # Static list of symbols
 CONFIG_MAX_POSITIONS = "max_positions"
+CONFIG_STAGNATION_THRESHOLD_MINUTES = "stagnation_threshold_minutes"  # Minutes before position is stagnant
 CONFIG_MIN_PRICE = "min_price"
 CONFIG_MAX_PRICE = "max_price"
 CONFIG_MIN_VOLUME = "min_volume"

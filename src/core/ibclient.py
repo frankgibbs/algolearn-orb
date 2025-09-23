@@ -145,22 +145,36 @@ class IBClient(EWrapper, EClient):
         #print("Error: ", reqId, " ", errorCode, " ", errorString)
         
     def get_historic_data(self, contract, history_duration, history_bar_size,timeout: int = 10, whatToShow = "MIDPOINT") -> Optional[Dict[str, Any]]:
+        """
+        Get historical data for a contract
 
+        Args:
+            contract: Contract object
+            history_duration: Duration string (e.g., "60 M")
+            history_bar_size: Bar size (e.g., "1 min")
+            timeout: Timeout in seconds
+            whatToShow: Data type (e.g., "MIDPOINT", "TRADES")
+
+        Returns:
+            DataFrame with historical data
+
+        Raises:
+            TimeoutError: If unable to get data within timeout
+        """
         request_id = self.get_next_request_id()
         pair = f"{contract.symbol}.{contract.currency}"
         self.history_received_event.clear()
-        
+
         self.history[request_id] = pd.DataFrame()
-                
+
         self.reqHistoricalData(request_id, contract, "", history_duration, history_bar_size, whatToShow , 1, 1, True, [])
 
         if self.history_received_event.wait(timeout=timeout):
             result = self.history[request_id]
-            self.history.pop(request_id)    
+            self.history.pop(request_id)
             return result
         else:
-            logger.info(f"Timeout waiting for history data for {contract.symbol}-{contract.conId}")
-            return None
+            raise TimeoutError(f"Timeout waiting for history data for {contract.symbol}-{contract.conId}")
 
     def historicalData(self, reqId:int, bar):
         super().historicalData(reqId, bar)
@@ -562,7 +576,18 @@ class IBClient(EWrapper, EClient):
         self.market_data_received_event.set()
 
     def get_pair_balance(self, symbol : str):
+        """
+        Get account balance for a currency
 
+        Args:
+            symbol: Currency symbol (e.g., "USD")
+
+        Returns:
+            Float balance amount
+
+        Raises:
+            TimeoutError: If unable to get balance within timeout
+        """
         self.pair_balance_received_event.clear()
         self.pair_balance.clear()
         self.pair_balance[symbol] = 0
@@ -570,15 +595,14 @@ class IBClient(EWrapper, EClient):
             request = "$LEDGER"
         else:
             request = f"$LEDGER:{symbol}"
-        
+
         request_id = self.get_next_request_id()
         self.reqAccountSummary(request_id, "All", request)
 
         if self.pair_balance_received_event.wait(timeout=10):
             return self.pair_balance[symbol]
         else:
-            logger.info(f"Timeout waiting for pair balance for {symbol}")
-            return None
+            raise TimeoutError(f"Timeout waiting for pair balance for {symbol}")
     
     def accountSummary(self, reqId: int, account: str, tag: str, value: str,
                            currency: str):
@@ -1107,39 +1131,37 @@ class IBClient(EWrapper, EClient):
             timeout: Timeout in seconds
 
         Returns:
-            Float price or None if error
+            Float price
+
+        Raises:
+            RuntimeError: If unable to get price data
+            TimeoutError: If request times out
         """
-        try:
-            # Create stock contract
-            stock_contract = self.get_stock_contract(symbol)
+        # Create stock contract
+        stock_contract = self.get_stock_contract(symbol)
 
-            # Get market data using stock-specific method
-            quote_data = self.get_stock_market_data(stock_contract, timeout)
+        # Get market data using stock-specific method
+        quote_data = self.get_stock_market_data(stock_contract, timeout)
 
-            if not quote_data:
-                return None
+        if not quote_data:
+            raise RuntimeError(f"Unable to get market data for {symbol}")
 
-            # Try to get last price first, then average of bid/ask
-            last_price = quote_data.get('last')
-            if last_price and last_price > 0:
-                return float(last_price)
+        # Try to get last price first, then average of bid/ask
+        last_price = quote_data.get('last')
+        if last_price and last_price > 0:
+            return float(last_price)
 
-            bid = quote_data.get('bid', 0)
-            ask = quote_data.get('ask', 0)
+        bid = quote_data.get('bid', 0)
+        ask = quote_data.get('ask', 0)
 
-            if bid > 0 and ask > 0:
-                return float((bid + ask) / 2)
-            elif bid > 0:
-                return float(bid)
-            elif ask > 0:
-                return float(ask)
-            else:
-                logger.warning(f"No valid price found for {symbol}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Error getting stock price for {symbol}: {e}")
-            return None
+        if bid > 0 and ask > 0:
+            return float((bid + ask) / 2)
+        elif bid > 0:
+            return float(bid)
+        elif ask > 0:
+            return float(ask)
+        else:
+            raise RuntimeError(f"No valid price found for {symbol} - bid: {bid}, ask: {ask}, last: {last_price}")
 
     def get_stock_bars(self, symbol, duration_minutes=60, bar_size="1 min", timeout=10):
         """
