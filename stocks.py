@@ -57,24 +57,24 @@ class StocksService(IObserver):
             raise ValueError(f"Invalid CONFIG_ORB_TIMEFRAME: {orb_timeframe}. Must be 15, 30, or 60")
 
         # ORB strategy checks - dynamic based on CONFIG_ORB_TIMEFRAME
-        # Run on clock-aligned intervals from after opening range until 12:50 PM PST
+        # Run on clock-aligned intervals from after opening range until 10:00 AM PST
         if orb_timeframe == 15:
-            # Check every 15 minutes starting after 6:45 AM
-            for hour in range(7, 13):  # 7 AM to 12 PM
+            # Check every 15 minutes starting after 6:45 AM until 10:00 AM
+            for hour in range(7, 11):  # 7 AM to 10 AM
                 for minute in [0, 15, 30, 45]:
-                    if hour == 12 and minute > 45:  # Stop before EOD exit at 12:50
+                    if hour == 10 and minute > 0:  # Only include 10:00, not 10:15/10:30/10:45
                         break
                     schedule.every().day.at(f"{hour:02d}:{minute:02d}").do(self.orb_strategy)
         elif orb_timeframe == 30:
-            # Check every 30 minutes starting after 7:00 AM
-            for hour in range(7, 13):  # 7 AM to 12 PM
+            # Check every 30 minutes starting after 7:00 AM until 10:00 AM
+            for hour in range(7, 11):  # 7 AM to 10 AM
                 for minute in [0, 30]:
-                    if hour == 12 and minute > 30:  # Stop before EOD exit at 12:50
+                    if hour == 10 and minute > 0:  # Only include 10:00, not 10:30
                         break
                     schedule.every().day.at(f"{hour:02d}:{minute:02d}").do(self.orb_strategy)
         elif orb_timeframe == 60:
-            # Check every hour starting after 7:30 AM
-            for hour in range(8, 13):  # 8 AM to 12 PM
+            # Check every hour starting after 7:30 AM until 10:00 AM
+            for hour in range(8, 11):  # 8 AM to 10 AM
                 schedule.every().day.at(f"{hour:02d}:00").do(self.orb_strategy)
 
         # Position state transitions every 30 seconds

@@ -68,6 +68,7 @@ class StocksTelegramManager(IObserver):
             dp.add_handler(CommandHandler("reset", self.reset_positions))
             dp.add_handler(CommandHandler("pnl", self.send_pnl))
             dp.add_handler(CommandHandler("orders", self.send_orders))
+            dp.add_handler(CommandHandler("margin", self.send_margins))
 
             # Add error handler
             dp.add_error_handler(self.error)
@@ -95,7 +96,7 @@ class StocksTelegramManager(IObserver):
             from src.stocks.services.stocks_chart_service import StocksChartService
 
             strategy_service = StocksStrategyService(self.application_context)
-            plot_data = strategy_service.get_plot_data(symbol)
+            plot_data, opening_range = strategy_service.get_plot_data(symbol)
 
             if plot_data is None or plot_data.empty:
                 update.message.reply_text(f"No data available for {symbol}")
@@ -103,7 +104,7 @@ class StocksTelegramManager(IObserver):
 
             # Generate chart
             chart_service = StocksChartService()
-            buf = chart_service.generate_candlestick_chart(plot_data, symbol)
+            buf = chart_service.generate_candlestick_chart(plot_data, symbol, opening_range)
 
             # Send photo using v13.5 method
             context.bot.sendPhoto(
@@ -349,3 +350,36 @@ class StocksTelegramManager(IObserver):
         message += f"P&L: ${current_pnl:.2f}"
 
         self.state_manager.sendTelegramMessage(message)
+
+    def send_margins(self, update, context):
+        """Handle /margin command - show cached margin requirements"""
+        try:
+            # Get data from service layer
+            from src.stocks.services.stocks_strategy_service import StocksStrategyService
+            strategy_service = StocksStrategyService(self.application_context)
+            margins = strategy_service.get_margin_requirements()
+
+            if not margins:
+                update.message.reply_text("No margin data available")
+                return
+
+            # Format as PrettyTable
+            table = PrettyTable(['Symbol', 'Margin/Share', 'Type'])
+            table.align['Symbol'] = 'l'
+            table.align['Margin/Share'] = 'r'
+            table.align['Type'] = 'c'
+
+            for m in margins:
+                margin_str = f"${m['margin_per_share']:.2f}"
+                type_str = "Synth" if m['synthetic'] else "Real"
+                table.add_row([m['symbol'], margin_str, type_str])
+
+            # Send using existing pattern - HTML with <pre> tag, no header
+            update.message.reply_text(
+                f'<pre>{table}</pre>',
+                parse_mode=ParseMode.HTML
+            )
+
+        except Exception as e:
+            logger.error(f"Error in /margin command: {e}", exc_info=True)
+            update.message.reply_text(f"Error: {str(e)}")

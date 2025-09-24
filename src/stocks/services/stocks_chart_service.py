@@ -17,13 +17,14 @@ class StocksChartService:
         """Initialize chart service"""
         pass
 
-    def generate_candlestick_chart(self, df_data, symbol):
+    def generate_candlestick_chart(self, df_data, symbol, opening_range=None):
         """
         Generate candlestick chart compatible with Telegram
 
         Args:
             df_data: DataFrame with OHLC data
             symbol: Stock symbol for title
+            opening_range: Optional OpeningRange object for support/resistance lines
 
         Returns:
             BytesIO buffer containing chart image
@@ -99,24 +100,36 @@ class StocksChartService:
             # Determine if we have volume data
             include_volume = 'Volume' in df_plot.columns and not df_plot['Volume'].isna().all()
 
-            # Create the plot
-            mpf.plot(
-                df_plot,
-                type='candle',
-                style=style,
-                title=f'{symbol} - {datetime.now().strftime("%Y-%m-%d")}',
-                ylabel='Price ($)',
-                ylabel_lower='Volume' if include_volume else None,
-                volume=include_volume,
-                savefig=dict(
+            # Prepare horizontal lines for opening range
+            plot_kwargs = {
+                'type': 'candle',
+                'style': style,
+                'title': f'{symbol} - {datetime.now().strftime("%Y-%m-%d")}',
+                'ylabel': 'Price ($)',
+                'ylabel_lower': 'Volume' if include_volume else None,
+                'volume': include_volume,
+                'savefig': dict(
                     fname=buf,
                     dpi=100,
                     bbox_inches='tight',
                     facecolor='white'
                 ),
-                returnfig=False,
-                scale_padding={'left': 0.3, 'top': 0.8, 'right': 0.5, 'bottom': 0.5}
-            )
+                'returnfig': False,
+                'scale_padding': {'left': 0.3, 'top': 0.8, 'right': 0.5, 'bottom': 0.5}
+            }
+
+            # Add opening range lines if available
+            if opening_range is not None:
+                plot_kwargs['hlines'] = dict(
+                    hlines=[opening_range.range_low, opening_range.range_high],
+                    colors=['green', 'red'],
+                    linestyle='-',
+                    linewidths=1.5,
+                    alpha=0.8
+                )
+
+            # Create the plot
+            mpf.plot(df_plot, **plot_kwargs)
 
             buf.seek(0)
             logger.info(f"Successfully generated chart for {symbol}")

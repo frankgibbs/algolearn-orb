@@ -120,6 +120,28 @@ class StocksMcpApi:
                     }
                 ),
                 Tool(
+                    name="get_stock_bars",
+                    description="Get historical OHLC bars for a stock symbol",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Stock symbol (e.g., AAPL)"
+                            },
+                            "duration_minutes": {
+                                "type": "integer",
+                                "description": "Duration in minutes (default: 390 for full day)"
+                            },
+                            "bar_size": {
+                                "type": "string",
+                                "description": "Bar size (e.g., '1 min', '5 mins', '30 mins')"
+                            }
+                        },
+                        "required": ["symbol"]
+                    }
+                ),
+                Tool(
                     name="get_opening_ranges",
                     description="Monitor and retrieve opening ranges from database for ORB strategy",
                     inputSchema={
@@ -159,6 +181,8 @@ class StocksMcpApi:
                     return await self._get_current_candidates(arguments or {})
                 elif name == "get_scanner_types":
                     return await self._get_scanner_types(arguments or {})
+                elif name == "get_stock_bars":
+                    return await self._get_stock_bars(arguments or {})
                 elif name == "get_opening_ranges":
                     return await self._get_opening_ranges(arguments or {})
                 else:
@@ -343,6 +367,55 @@ class StocksMcpApi:
         except Exception as e:
             logger.error(f"Error getting scanner types: {e}")
             return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
+
+    async def _get_stock_bars(self, args: dict) -> list[TextContent]:
+        """Get historical OHLC bars for analysis"""
+        symbol = args.get("symbol")
+        duration_minutes = args.get("duration_minutes", 390)  # Default full day
+        bar_size = args.get("bar_size", "30 mins")  # Default 30 min bars
+
+        if not symbol:
+            return [TextContent(type="text", text="Error: symbol is required")]
+
+        try:
+            # Use the client to get bars
+            bars = self.application_context.client.get_stock_bars(
+                symbol=symbol,
+                duration_minutes=duration_minutes,
+                bar_size=bar_size
+            )
+
+            if bars is None or bars.empty:
+                return [TextContent(type="text", text=f"No data available for {symbol}")]
+
+            # Format bars for output
+            result = {
+                "symbol": symbol,
+                "bar_size": bar_size,
+                "duration_minutes": duration_minutes,
+                "bar_count": len(bars),
+                "bars": []
+            }
+
+            for i, row in bars.iterrows():
+                result["bars"].append({
+                    "index": i,
+                    "datetime": str(row['date']),
+                    "open": row['open'],
+                    "high": row['high'],
+                    "low": row['low'],
+                    "close": row['close'],
+                    "volume": row.get('volume', 0)
+                })
+
+            return [TextContent(
+                type="text",
+                text=json.dumps(result, indent=2, default=str)
+            )]
+
+        except Exception as e:
+            logger.error(f"Error in _get_stock_bars: {e}")
+            return [TextContent(type="text", text=f"Error: {str(e)}")]
 
     async def _get_opening_ranges(self, args: dict) -> list[TextContent]:
         """Monitor and retrieve opening ranges from database"""
@@ -628,6 +701,8 @@ class StocksMcpApi:
                         result = await self._get_current_candidates(arguments)
                     elif tool_name == "get_scanner_types":
                         result = await self._get_scanner_types(arguments)
+                    elif tool_name == "get_stock_bars":
+                        result = await self._get_stock_bars(arguments)
                     elif tool_name == "get_opening_ranges":
                         result = await self._get_opening_ranges(arguments)
                     else:

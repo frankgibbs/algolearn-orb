@@ -1,6 +1,6 @@
 from src import logger
 from src.stocks.models.position import Position
-from src.core.constants import CONFIG_ORB_TIMEFRAME
+from src.core.constants import CONFIG_ORB_TIMEFRAME, FIELD_STOCK_MARGIN_REQUIREMENTS
 from datetime import datetime, date
 import pytz
 
@@ -560,17 +560,75 @@ class StocksStrategyService:
         finally:
             session.close()
 
+    def has_open_position(self, symbol):
+        """
+        Check if a specific symbol has any open or pending positions
+
+        Args:
+            symbol: Stock symbol to check (required)
+
+        Returns:
+            Boolean indicating if symbol has open/pending positions
+
+        Raises:
+            ValueError: If symbol is None or empty
+            RuntimeError: If database query fails
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+
+        # Query positions for this specific symbol with status 'OPEN' or 'PENDING'
+        # Let exceptions propagate per CLAUDE.md pattern
+        session = self.database_manager.get_session()
+        try:
+            position_count = session.query(Position).filter(
+                Position.symbol == symbol,
+                Position.status.in_(['OPEN', 'PENDING'])
+            ).count()
+
+            has_position = position_count > 0
+            logger.debug(f"Symbol {symbol} has open/pending positions: {has_position}")
+            return has_position
+        finally:
+            session.close()
+
+    def get_margin_requirements(self):
+        """
+        Get cached margin requirements for all configured stocks
+
+        Returns:
+            List of dicts with symbol, margin, and metadata for each stock
+
+        Raises:
+            RuntimeError: If margin data cannot be retrieved
+        """
+        from src.stocks.stocks_config import STOCK_SYMBOLS
+        margin_cache = self.state_manager.get_state(FIELD_STOCK_MARGIN_REQUIREMENTS) or {}
+
+        result = []
+        for symbol in STOCK_SYMBOLS:
+            margin_data = margin_cache.get(symbol, {})
+            result.append({
+                'symbol': symbol,
+                'margin_per_share': margin_data.get('margin', 0),
+                'synthetic': margin_data.get('synthetic', False),
+                'last_updated': margin_data.get('timestamp', 'N/A')
+            })
+
+        logger.debug(f"Retrieved margin requirements for {len(result)} stocks")
+        return result
+
     # Telegram command support methods
 
     def get_plot_data(self, symbol):
         """
-        Get OHLC data for plotting
+        Get OHLC data and opening range for plotting
 
         Args:
             symbol: Stock symbol (required)
 
         Returns:
-            DataFrame with OHLC data for plotting
+            Tuple of (DataFrame with OHLC data, OpeningRange object or None)
 
         Raises:
             ValueError: If symbol is None
@@ -596,7 +654,16 @@ class StocksStrategyService:
         if bars is None or bars.empty:
             raise RuntimeError(f"No data available for {symbol}")
 
-        return bars
+        # Get opening range for today
+        from datetime import date
+        opening_range = self.get_opening_range(symbol, date.today())
+
+        # Log the opening range details for debugging
+        if opening_range:
+            logger.info(f"Using opening range for {symbol}: date={opening_range.date}, "
+                        f"high={opening_range.range_high}, low={opening_range.range_low}")
+
+        return bars, opening_range
 
     def get_opening_ranges_summary(self, date=None):
         """

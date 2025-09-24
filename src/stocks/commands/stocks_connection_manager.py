@@ -41,6 +41,13 @@ class StocksConnectionManager(Command):
         self.state_manager.set_state("connected", is_connected)
         self.state_manager.set_state("market_status", market_status)
 
+        # Trigger margin calculation after successful connection
+        if is_connected:
+            self.application_context.subject.notify({
+                FIELD_TYPE: EVENT_TYPE_CALCULATE_STOCK_MARGINS
+            })
+            logger.info("Triggered stock margin calculation")
+
         # Log status
         logger.info(f"Connection: {'Connected' if is_connected else 'Disconnected'}")
         logger.info(f"Market Status: {market_status}")

@@ -73,6 +73,11 @@ class ORBSignalCommand(Command):
         if now is None:
             raise ValueError("now is REQUIRED")
 
+        # Skip if symbol already has open/pending position
+        if strategy_service.has_open_position(symbol):
+            logger.info(f"Skipping {symbol} - already has open/pending position")
+            return False
+
         # Get opening range for this stock - let exception propagate
         opening_range = strategy_service.get_opening_range(symbol, now.date())
         if not opening_range:
@@ -196,8 +201,12 @@ class ORBSignalCommand(Command):
         if risk_pct is None or risk_pct <= 0:
             raise ValueError("CONFIG_RISK_PERCENTAGE is REQUIRED and must be positive")
 
-        # Get margin per share - will raise if fails
-        margin_per_share = ib_client.get_margin_per_share(symbol)
+        # Get cached margin instead of API call
+        margin_cache = self.state_manager.get_state(FIELD_STOCK_MARGIN_REQUIREMENTS) or {}
+        margin_data = margin_cache.get(symbol)
+        if not margin_data:
+            raise RuntimeError(f"No cached margin for {symbol}")
+        margin_per_share = margin_data['margin']
 
         # Calculate how many shares we can afford with risk %
         risk_amount = account_value * (risk_pct / 100)
