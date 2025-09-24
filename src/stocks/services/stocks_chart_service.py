@@ -123,7 +123,7 @@ class StocksChartService:
                 plot_kwargs['hlines'] = dict(
                     hlines=[opening_range.range_low, opening_range.range_high],
                     colors=['green', 'red'],
-                    linestyle='-',
+                    linestyle='-.',
                     linewidths=1.5,
                     alpha=0.8
                 )

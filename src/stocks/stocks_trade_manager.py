@@ -38,7 +38,7 @@ class StocksTradeManager(IObserver):
         # Register position management commands
         self.command_invoker.register_command(EVENT_TYPE_END_OF_DAY_EXIT, EndOfDayExitCommand(self.application_context))
         self.command_invoker.register_command(EVENT_TYPE_TIME_BASED_EXIT, TimeBasedExitCommand(self.application_context))
-        self.command_invoker.register_command(EVENT_TYPE_MOVE_STOP_ORDERS, MoveStopOrderCommand(self.application_context))
+        self.command_invoker.register_command(EVENT_TYPE_MOVE_STOP_ORDER, MoveStopOrderCommand(self.application_context))
 
     def notify(self, observable, *args):
 
