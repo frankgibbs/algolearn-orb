@@ -4,6 +4,7 @@ from src.core.command_invoker import CommandInvoker
 
 from src.stocks.commands.pre_market_scan_command import PreMarketScanCommand
 from src.stocks.commands.calculate_opening_range_command import CalculateOpeningRangeCommand
+from src.stocks.commands.open_position_command import OpenPositionCommand
 from src.stocks.commands.manage_stock_positions_command import ManageStockPositionsCommand
 from src.stocks.commands.stocks_connection_manager import StocksConnectionManager
 from src.stocks.commands.strategies.orb_signal_command import ORBSignalCommand
@@ -24,6 +25,7 @@ class StocksTradeManager(IObserver):
         self.command_invoker.register_command(EVENT_TYPE_PRE_MARKET_SCAN, PreMarketScanCommand(self.application_context))
         self.command_invoker.register_command(EVENT_TYPE_CALCULATE_OPENING_RANGE, CalculateOpeningRangeCommand(self.application_context))
         self.command_invoker.register_command(EVENT_TYPE_ORB_STRATEGY, ORBSignalCommand(self.application_context))
+        self.command_invoker.register_command(EVENT_TYPE_OPEN_POSITION, OpenPositionCommand(self.application_context))
         self.command_invoker.register_command(EVENT_TYPE_MANAGE_STOCK_POSITIONS, ManageStockPositionsCommand(self.application_context))
         self.command_invoker.register_command(EVENT_TYPE_CLOSE_ALL_STOCK_POSITIONS, ManageStockPositionsCommand(self.application_context))
         self.command_invoker.register_command(EVENT_TYPE_STOCKS_CONNECTION_CHECK, StocksConnectionManager(self.application_context))

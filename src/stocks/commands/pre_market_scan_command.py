@@ -36,6 +36,7 @@ class PreMarketScanCommand(Command):
         min_price = self._get_validated_config_value(CONFIG_MIN_PRICE, 5.0, "minimum price")
         max_price = self._get_validated_config_value(CONFIG_MAX_PRICE, 200.0, "maximum price")
         min_volume = self._get_validated_config_value(CONFIG_MIN_VOLUME, 100000, "minimum volume")
+        min_pre_market_change = self._get_validated_config_value(CONFIG_MIN_PRE_MARKET_CHANGE, 2.0, "minimum pre-market change %")
 
         # Validate price range
         if min_price >= max_price:
@@ -46,14 +47,17 @@ class PreMarketScanCommand(Command):
             raise ValueError(f"min_price must be > 0, got ${min_price}")
         if min_volume <= 0:
             raise ValueError(f"min_volume must be > 0, got {min_volume:,}")
+        if min_pre_market_change < 0:
+            raise ValueError(f"min_pre_market_change must be >= 0, got {min_pre_market_change}%")
 
-        logger.info(f"Scanning with filters: Price ${min_price}-${max_price}, Volume {min_volume:,}")
+        logger.info(f"Scanning with filters: Price ${min_price}-${max_price}, Volume {min_volume:,}, Min Change {min_pre_market_change}%")
 
         # Build scanner criteria
         scan_criteria = {
             "min_price": min_price,
             "max_price": max_price,
             "min_volume": min_volume,
+            "min_pre_market_change": min_pre_market_change,
             "max_results": 100  # Get more results to filter down
         }
 

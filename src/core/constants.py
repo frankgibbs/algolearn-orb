@@ -156,6 +156,7 @@ CONFIG_STAGNATION_THRESHOLD_MINUTES = "stagnation_threshold_minutes"  # Minutes 
 CONFIG_MIN_PRICE = "min_price"
 CONFIG_MAX_PRICE = "max_price"
 CONFIG_MIN_VOLUME = "min_volume"
+CONFIG_MIN_PRE_MARKET_CHANGE = "min_pre_market_change"
 
 FIELD_ORDER_ID = "order_id"
 FIELD_ORDER = "order"

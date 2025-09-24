@@ -1,6 +1,7 @@
 from src.core.observer import IObserver
 from src.core.constants import *
 from src import logger
+from src.stocks.stocks_database_manager import StocksDatabaseManager
 
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 from telegram import ParseMode
@@ -62,6 +63,9 @@ class StocksTelegramManager(IObserver):
             dp.add_handler(CommandHandler("plot", self.send_plot))
             dp.add_handler(CommandHandler("ranges", self.send_ranges))
             dp.add_handler(CommandHandler("calc", self.calc_ranges))
+            dp.add_handler(CommandHandler("break", self.check_breakout))
+            dp.add_handler(CommandHandler("cancel", self.cancel_order))
+            dp.add_handler(CommandHandler("reset", self.reset_positions))
             dp.add_handler(CommandHandler("pnl", self.send_pnl))
             dp.add_handler(CommandHandler("orders", self.send_orders))
 
@@ -145,6 +149,60 @@ class StocksTelegramManager(IObserver):
         except Exception as e:
             logger.error(f"Error in calc_ranges: {e}", exc_info=True)
             update.message.reply_text(f"Error: {str(e)}")
+
+    def check_breakout(self, update, context):
+        """Handle /break command - Check for ORB breakout signals on demand"""
+        try:
+            update.message.reply_text("🔍 Checking for ORB breakout signals...")
+
+            # Trigger the ORB signal detection
+            event = {FIELD_TYPE: EVENT_TYPE_ORB_STRATEGY}
+            self.subject.notify(event)
+
+        except Exception as e:
+            logger.error(f"Error in check_breakout: {e}", exc_info=True)
+            update.message.reply_text(f"Error: {str(e)}")
+
+    def cancel_order(self, update, context):
+        """Handle /cancel [order_id] command - Cancel an IB order"""
+        try:
+            # Check if order ID was provided
+            if not context.args:
+                update.message.reply_text("Usage: /cancel ORDER_ID")
+                return
+
+            # Parse order ID
+            try:
+                order_id = int(context.args[0])
+            except ValueError:
+                update.message.reply_text("❌ Invalid order ID. Must be a number.")
+                return
+
+            # Cancel the order
+            ib_client = self.application_context.client
+            ib_client.cancel_stock_order(order_id)
+
+            update.message.reply_text(f"✅ Cancel request sent for order {order_id}")
+
+        except Exception as e:
+            logger.error(f"Error in cancel_order: {e}", exc_info=True)
+            update.message.reply_text(f"❌ Error cancelling order: {str(e)}")
+
+    def reset_positions(self, update, context):
+        """Handle /reset command - Delete all positions from database"""
+        try:
+            # Initialize database manager
+            database_manager = StocksDatabaseManager(self.application_context)
+
+            # Delete all positions
+            count = database_manager.delete_all_positions()
+
+            update.message.reply_text(f"✅ Reset complete. Deleted {count} positions from database.")
+            logger.info(f"User reset database - {count} positions deleted")
+
+        except Exception as e:
+            logger.error(f"Error in reset_positions: {e}", exc_info=True)
+            update.message.reply_text(f"❌ Error resetting positions: {str(e)}")
 
     def send_pnl(self, update, context):
         """Handle /pnl command"""

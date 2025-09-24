@@ -2,6 +2,7 @@ from src.core.command import Command
 from src.core.constants import *
 from src import logger
 import pytz
+import time
 from datetime import datetime
 
 class ManageStockPositionsCommand(Command):
@@ -47,6 +48,8 @@ class ManageStockPositionsCommand(Command):
 
         for position in pending_positions:
             self._check_position_fill(position)
+            # Small delay to avoid overwhelming IB
+            time.sleep(0.1)
 
     def _check_open_positions(self):
         """Check OPEN positions for stop order fills"""
@@ -60,6 +63,8 @@ class ManageStockPositionsCommand(Command):
 
         for position in open_positions:
             self._check_stop_fill(position)
+            # Small delay to avoid overwhelming IB
+            time.sleep(0.1)
 
     def _check_position_fill(self, position):
         """
@@ -74,17 +79,29 @@ class ManageStockPositionsCommand(Command):
         if position is None:
             raise ValueError("position is REQUIRED")
 
-        logger.debug(f"Checking parent order fill for position {position.id}")
+        logger.debug(f"Checking parent order {position.id} for position {position.symbol}")
 
-        # Get order status from IB
-        order_status = self.client.get_order_by_id(position.id)
+        # Check for fills directly - this is what we actually care about
+        fill_info = self.client.get_fills_by_order_id(position.id, timeout=5)
 
-        if order_status and order_status.get('status') == 'Filled':
-            fill_price = order_status.get('avgFillPrice', 0.0)
-            fill_time = order_status.get('fillTime')
+        if fill_info:
+            # Extract fill price from fill info
+            avg_fill_price = fill_info.get('lmtPrice')
+            if avg_fill_price is None or avg_fill_price == 0:
+                logger.error(f"Order {position.id} is filled but has no valid fill price")
+                logger.error(f"Fill info: {fill_info}")
+                self.state_manager.sendTelegramMessage(
+                    f"Order {position.id} is filled but has no valid fill price"
+                )
+                raise RuntimeError(f"Order {position.id} filled with invalid price: {avg_fill_price}")
+
+            # Don't use IB's fill time - just use current time for consistency
+            fill_time = datetime.now()
+
+            logger.info(f"Position {position.id} ({position.symbol}) filled at ${avg_fill_price}")
 
             # Transition to OPEN
-            self._transition_to_open(position, fill_price, fill_time)
+            self._transition_to_open(position, avg_fill_price, fill_time)
 
     def _check_stop_fill(self, position):
         """
@@ -99,17 +116,29 @@ class ManageStockPositionsCommand(Command):
         if position is None:
             raise ValueError("position is REQUIRED")
 
-        logger.debug(f"Checking stop order fill for position {position.id}")
+        logger.debug(f"Checking stop order {position.stop_order_id} for position {position.symbol}")
 
-        # Get stop order status from IB
-        stop_order_status = self.client.get_order_by_id(position.stop_order_id)
+        # Check for fills directly - this is what we actually care about
+        fill_info = self.client.get_fills_by_order_id(position.stop_order_id, timeout=5)
 
-        if stop_order_status and stop_order_status.get('status') == 'Filled':
-            exit_price = stop_order_status.get('avgFillPrice', 0.0)
-            exit_time = stop_order_status.get('fillTime')
+        if fill_info:
+            # Extract fill price from fill info
+            avg_fill_price = fill_info.get('lmtPrice')
+            if avg_fill_price is None or avg_fill_price == 0:
+                logger.error(f"Stop order {position.stop_order_id} is filled but has no valid fill price")
+                logger.error(f"Fill info: {fill_info}")
+                self.state_manager.sendTelegramMessage(
+                    f"Stop order {position.stop_order_id} is filled but has no valid fill price"
+                )
+                raise RuntimeError(f"Stop order {position.stop_order_id} filled with invalid price: {avg_fill_price}")
+
+            # Don't use IB's fill time - just use current time for consistency
+            fill_time = datetime.now()
+
+            logger.info(f"Stop order {position.stop_order_id} ({position.symbol}) filled at ${avg_fill_price}")
 
             # Transition to CLOSED
-            self._transition_to_closed(position, exit_price, exit_time, "STOP_LOSS")
+            self._transition_to_closed(position, avg_fill_price, fill_time, "STOP_LOSS")
 
     def _transition_to_open(self, position, fill_price, fill_time):
         """

@@ -549,12 +549,16 @@ class StocksStrategyService:
         """
         # Query positions with status 'OPEN' or 'PENDING'
         # Let exceptions propagate per CLAUDE.md pattern
-        open_positions = self.database_manager.session.query(Position).filter(
-            Position.status.in_(['OPEN', 'PENDING'])
-        ).count()
+        session = self.database_manager.get_session()
+        try:
+            open_positions = session.query(Position).filter(
+                Position.status.in_(['OPEN', 'PENDING'])
+            ).count()
 
-        logger.debug(f"Current open positions count: {open_positions}")
-        return open_positions
+            logger.debug(f"Current open positions count: {open_positions}")
+            return open_positions
+        finally:
+            session.close()
 
     # Telegram command support methods
 

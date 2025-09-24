@@ -5,7 +5,8 @@ from src.stocks.stocks_config import STOCK_SYMBOLS
 from src.core.ibclient import IBClient
 from src import logger
 import pytz
-from datetime import datetime
+from datetime import datetime, timedelta
+import pandas as pd
 
 class ORBSignalCommand(Command):
     """
@@ -28,18 +29,9 @@ class ORBSignalCommand(Command):
 
         logger.info("Executing ORB signal detection")
 
-        # Validate timing
+        # Get current time for bar selection
         pacific_tz = pytz.timezone('US/Pacific')
         now = datetime.now(pacific_tz)
-
-        if not self._is_valid_trading_time(now):
-            logger.warning(f"ORB signal called outside trading hours: {now}")
-            return
-
-        # Check if we're on a clock-aligned interval
-        if not self._is_clock_aligned_time(now):
-            logger.debug(f"Not on clock-aligned interval: {now}")
-            return
 
         # Initialize services
         strategy_service = StocksStrategyService(self.application_context)
@@ -51,18 +43,10 @@ class ORBSignalCommand(Command):
         # Check each stock for breakout conditions
         signals_generated = 0
         for symbol in STOCK_SYMBOLS:
-            try:
-                if self._analyze_stock_for_breakout(symbol, strategy_service, ib_client, now):
-                    signals_generated += 1
-            except Exception as e:
-                logger.error(f"Error analyzing stock {symbol}: {e}")
-                # Send notification immediately
-                self.state_manager.sendTelegramMessage(
-                    f"⚠️ ORB Signal Error for {symbol}: {str(e)[:100]}"
-                )
-                # Continue with other stocks
+            if self._analyze_stock_for_breakout(symbol, strategy_service, ib_client, now):
+                signals_generated += 1
 
-        logger.info(f"ORB signal detection complete. Generated {signals_generated} signals")
+
 
     def _analyze_stock_for_breakout(self, symbol, strategy_service, ib_client, now):
         """
@@ -106,12 +90,27 @@ class ORBSignalCommand(Command):
             bar_size=f"{timeframe_minutes} mins"
         )
 
-        if bars_df is None or len(bars_df) < 2:
-            raise RuntimeError(f"Insufficient bar data for {symbol}: got {len(bars_df) if bars_df is not None else 0} bars, need at least 2")
+        # Simple bar selection based on minute comparison
+        current_minute = now.minute
+        last_bar = bars_df.iloc[-1]
+        last_bar_time = last_bar['date']
+        last_bar_minute = last_bar_time.minute
 
-        # Get the previous completed bar (not the current incomplete one)
-        previous_bar = bars_df.iloc[-2]
+        if current_minute == last_bar_minute:
+            # We're still in the same minute/bar period
+            previous_bar = bars_df.iloc[-2]
+            logger.info(f"{symbol} - Current bar still in progress (minute {current_minute}), using previous bar")
+        else:
+            # The last bar is complete
+            previous_bar = bars_df.iloc[-1]
+            logger.info(f"{symbol} - Last bar complete, using bar from minute {last_bar_minute}")
+
         previous_close = previous_bar['close']
+
+        # Log the range and bar being checked
+        bar_time = previous_bar['date']
+        logger.info(f"{symbol} - Range: ${opening_range.range_low:.2f}-${opening_range.range_high:.2f}, "
+                   f"Checking bar: {bar_time}, Close: ${previous_close:.2f}")
 
         # Check breakout conditions: previous candle closed above/below range
         breakout_signal = self._check_breakout_signal(opening_range, previous_close)
@@ -160,18 +159,18 @@ class ORBSignalCommand(Command):
             # Breakout above range - LONG signal
             return {
                 'signal': 'LONG',
-                'entry_price': opening_range.range_high,
-                'stop_loss': opening_range.range_mid,
-                'take_profit': opening_range.range_high + (1.5 * opening_range.range_size),
+                'entry_price': round(opening_range.range_high, 2),
+                'stop_loss': round(opening_range.range_mid, 2),
+                'take_profit': round(opening_range.range_high + (1.5 * opening_range.range_size), 2),
                 'range_size': opening_range.range_size
             }
         elif previous_close < opening_range.range_low:
             # Breakout below range - SHORT signal
             return {
                 'signal': 'SHORT',
-                'entry_price': opening_range.range_low,
-                'stop_loss': opening_range.range_mid,
-                'take_profit': opening_range.range_low - (1.5 * opening_range.range_size),
+                'entry_price': round(opening_range.range_low, 2),
+                'stop_loss': round(opening_range.range_mid, 2),
+                'take_profit': round(opening_range.range_low - (1.5 * opening_range.range_size), 2),
                 'range_size': opening_range.range_size
             }
         else:
@@ -188,7 +187,7 @@ class ORBSignalCommand(Command):
             opening_range: Opening range record
             ib_client: IBClient instance from application context
         """
-        # Calculate position size based on account risk
+        # Calculate position size based on account risk AND margin
         # Get real account value from IB (no silent defaults)
         account_value = ib_client.get_pair_balance("USD")
         if account_value is None or account_value <= 0:
@@ -197,9 +196,19 @@ class ORBSignalCommand(Command):
         if risk_pct is None or risk_pct <= 0:
             raise ValueError("CONFIG_RISK_PERCENTAGE is REQUIRED and must be positive")
 
+        # Get margin per share - will raise if fails
+        margin_per_share = ib_client.get_margin_per_share(symbol)
+
+        # Calculate how many shares we can afford with risk %
         risk_amount = account_value * (risk_pct / 100)
-        price_diff = abs(breakout_signal['entry_price'] - breakout_signal['stop_loss'])
-        quantity = int(risk_amount / price_diff) if price_diff > 0 else 100
+
+        # Position size = risk amount / margin per share
+        quantity = int(risk_amount / margin_per_share)
+
+        if quantity <= 0:
+            raise ValueError(f"Calculated position size is {quantity} for {symbol}")
+
+        logger.info(f"{symbol}: Margin/share=${margin_per_share:.2f}, Risk=${risk_amount:.2f}, Shares={quantity}")
 
         # Prepare event data
         position_data = {
@@ -216,7 +225,8 @@ class ORBSignalCommand(Command):
         }
 
         # Publish the event
-        self.application_context.publish_event(EVENT_TYPE_OPEN_POSITION, position_data)
+        event = {FIELD_TYPE: EVENT_TYPE_OPEN_POSITION, FIELD_DATA: position_data}
+        self.application_context.subject.notify(event)
 
         logger.info(f"🚀 ORB Signal Published: {position_data['action']} {symbol} @ {breakout_signal['entry_price']}")
 

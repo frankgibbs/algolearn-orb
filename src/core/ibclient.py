@@ -6,6 +6,7 @@ from ibapi.wrapper import EWrapper
 from ibapi.contract import Contract, ContractDetails, ComboLeg
 from ibapi.order import Order
 from ibapi.order_state import OrderState
+from ibapi.order_cancel import OrderCancel
 from pytz import timezone
 import time
 from decimal import Decimal
@@ -1378,4 +1379,82 @@ class IBClient(EWrapper, EClient):
         self.placeOrder(order_id, contract, existing_order)
 
         return True
+
+    def cancel_stock_order(self, order_id):
+        """
+        Cancel an order by ID
+
+        Args:
+            order_id: Order ID to cancel (required)
+
+        Returns:
+            Boolean indicating success
+
+        Raises:
+            ValueError: If order_id is invalid
+            RuntimeError: If cancel fails
+        """
+        if not order_id:
+            raise ValueError("order_id is REQUIRED")
+
+        try:
+            # Create OrderCancel object with default values
+            order_cancel = OrderCancel()
+
+            # Call the inherited cancelOrder method from EClient
+            self.cancelOrder(order_id, order_cancel)
+            logger.info(f"Cancel request sent for order {order_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to cancel order {order_id}: {e}")
+            raise RuntimeError(f"Failed to cancel order {order_id}: {e}")
+
+    def get_margin_per_share(self, symbol, timeout=10):
+        """
+        Get margin requirement per share by testing with 10 shares
+
+        Args:
+            symbol: Stock symbol (required)
+            timeout: Timeout in seconds
+
+        Returns:
+            Float margin requirement per share
+
+        Raises:
+            ValueError: If symbol is invalid
+            RuntimeError: If margin check fails or returns invalid data
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+
+        # Create what-if order for 10 shares
+        contract = self.get_stock_contract(symbol)
+
+        order = Order()
+        order.action = "BUY"
+        order.orderType = "MKT"
+        order.totalQuantity = 10
+        order.whatIf = True  # What-if order for margin calc
+
+        order_id = self.get_next_order_id()
+        if not order_id:
+            raise RuntimeError(f"Could not get order ID for margin check")
+
+        result = self.submitOrder(order_id, contract, order, timeout)
+
+        if not result:
+            raise RuntimeError(f"Could not get margin info for {symbol}")
+
+        # Get margin change for 10 shares - NO DEFAULTS
+        margin_for_10 = result.get('initMarginChange')
+        if margin_for_10 is None or margin_for_10 == 0:
+            raise RuntimeError(f"Invalid margin data for {symbol}: {margin_for_10}")
+
+        # Use absolute value since we care about margin requirement regardless of direction
+        # Negative = short selling frees up margin, Positive = buying requires margin
+        margin_for_10 = abs(margin_for_10)
+        margin_per_share = margin_for_10 / 10
+        logger.info(f"Margin check for {symbol}: ${margin_for_10:.2f} for 10 shares = ${margin_per_share:.2f} per share")
+
+        return margin_per_share
 

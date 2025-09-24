@@ -513,3 +513,32 @@ class StocksDatabaseManager(IObserver):
             return session.query(Position).filter_by(id=position_id).first()
         finally:
             session.close()
+
+    def delete_all_positions(self):
+        """
+        Delete all positions from the database (RESET operation)
+
+        Returns:
+            Number of positions deleted
+
+        Raises:
+            RuntimeError: If deletion fails
+        """
+        session = self.get_session()
+        try:
+            # Count positions before deletion
+            count = session.query(Position).count()
+
+            # Delete all positions
+            session.query(Position).delete()
+            session.commit()
+
+            logger.info(f"Deleted {count} positions from database")
+            return count
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to delete positions: {e}")
+            raise RuntimeError(f"Failed to delete positions: {e}")
+        finally:
+            session.close()
