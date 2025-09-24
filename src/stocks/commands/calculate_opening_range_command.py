@@ -4,7 +4,7 @@ from src.stocks.services.stocks_strategy_service import StocksStrategyService
 from src.stocks.stocks_config import STOCK_SYMBOLS, get_stock_config
 from src import logger
 import pytz
-from datetime import datetime
+from datetime import datetime, time
 from prettytable import PrettyTable
 
 class CalculateOpeningRangeCommand(Command):
@@ -78,17 +78,73 @@ class CalculateOpeningRangeCommand(Command):
 
         logger.info(f"Calculating {timeframe_minutes}m opening range for {symbol}")
 
-        # Fetch 1 bar matching timeframe
+        # Calculate market open time for today in Pacific Time (6:30 AM PST = 9:30 AM ET)
+        pacific_tz = pytz.timezone('US/Pacific')
+        today_date = now.date()
+        market_open_pst = pacific_tz.localize(datetime.combine(today_date, time(hour=6, minute=30)))
+
+        # Ensure we're working in PST
+        now_pst = now if now.tzinfo else pacific_tz.localize(now)
+
+        # Calculate minutes elapsed since market open
+        if now_pst < market_open_pst:
+            raise RuntimeError(f"Market has not opened yet. Current time: {now_pst}, Market opens: {market_open_pst}")
+
+        minutes_since_open = int((now_pst - market_open_pst).total_seconds() / 60)
+
+        # Request enough historical data to cover from market open to now
+        # Add buffer to ensure we get the opening range bar
+        duration_minutes = max(minutes_since_open + timeframe_minutes, timeframe_minutes * 2)
+
+        logger.info(f"Market opened {minutes_since_open} minutes ago, requesting {duration_minutes} minutes of data")
+
+        # Fetch historical bars with sufficient duration
         bar_size = f"{timeframe_minutes} mins"
         bars = self.client.get_stock_bars(
             symbol=symbol,
-            duration_minutes=timeframe_minutes,
+            duration_minutes=duration_minutes,
             bar_size=bar_size,
             timeout=10
         )
 
-        # Calculate range from single bar (get_stock_bars already validates data)
-        range_data = strategy_service.calculate_range(bars)
+        # Extract the first bar (opening range) from the historical data
+        if bars.empty:
+            raise RuntimeError(f"No historical data received for {symbol}")
+
+        # Debug: log all bar timestamps to understand what IB is returning
+        logger.info(f"Received {len(bars)} bars for {symbol}:")
+        for i, row in bars.iterrows():
+            logger.info(f"  Bar {i}: {row['date']} - OHLC: {row['open']:.2f}/{row['high']:.2f}/{row['low']:.2f}/{row['close']:.2f}")
+
+        # Find the opening range bar by counting backwards from the last bar
+        last_bar = bars.iloc[-1]
+        last_bar_time = last_bar['date']
+
+        # Assume timestamps are in ET (market timezone)
+        # Market opens at 9:30 AM ET
+        market_open_time = last_bar_time.replace(hour=9, minute=30, second=0, microsecond=0)
+
+        # Calculate minutes from market open to last bar
+        minutes_from_open = int((last_bar_time - market_open_time).total_seconds() / 60)
+
+        # Calculate how many bars since market open
+        bars_since_open = minutes_from_open // timeframe_minutes
+
+        # The opening bar index (counting backwards from last bar)
+        opening_bar_index = len(bars) - bars_since_open - 1
+
+        logger.info(f"Last bar at {last_bar_time}, {minutes_from_open} minutes from market open")
+        logger.info(f"Opening bar should be at index {opening_bar_index} ({bars_since_open} bars back)")
+
+        if opening_bar_index < 0 or opening_bar_index >= len(bars):
+            raise RuntimeError(f"Cannot find opening bar: calculated index {opening_bar_index} out of range (0-{len(bars)-1})")
+
+        opening_bar = bars.iloc[opening_bar_index:opening_bar_index+1]
+        bar_timestamp = opening_bar.iloc[0]['date']
+        logger.info(f"Using opening range bar at {bar_timestamp} for {symbol}")
+
+        # Calculate range from opening bar only
+        range_data = strategy_service.calculate_range(opening_bar)
 
         # Validate range using stock-specific config
         stock_config = get_stock_config(symbol)

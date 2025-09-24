@@ -206,6 +206,9 @@ class IBClient(EWrapper, EClient):
         }
         if bar["volume"] == -1:
             bar["volume"] = 0
+
+        # Ensure volume is numeric (int) for mplfinance compatibility
+        bar["volume"] = int(bar["volume"])
        
         self.history[reqId] = self.history[reqId].append(bar, ignore_index=True)
 

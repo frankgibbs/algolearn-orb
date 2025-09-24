@@ -1,5 +1,6 @@
 from src import logger
 from src.stocks.models.position import Position
+from src.core.constants import CONFIG_ORB_TIMEFRAME
 from datetime import datetime, date
 import pytz
 

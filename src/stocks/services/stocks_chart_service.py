@@ -48,6 +48,9 @@ class StocksChartService:
                 if 'datetime' in df_data.columns:
                     df_data = df_data.set_index('datetime')
                     df_data.index = pd.to_datetime(df_data.index)
+                elif 'date' in df_data.columns:
+                    df_data = df_data.set_index('date')
+                    df_data.index = pd.to_datetime(df_data.index)
                 else:
                     df_data.index = pd.to_datetime(df_data.index)
 
