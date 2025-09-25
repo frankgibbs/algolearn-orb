@@ -69,6 +69,8 @@ class StocksTelegramManager(IObserver):
             dp.add_handler(CommandHandler("pnl", self.send_pnl))
             dp.add_handler(CommandHandler("orders", self.send_orders))
             dp.add_handler(CommandHandler("margin", self.send_margins))
+            dp.add_handler(CommandHandler("scan", self.manual_scan))
+            dp.add_handler(CommandHandler("list", self.list_candidates))
 
             # Add error handler
             dp.add_error_handler(self.error)
@@ -278,6 +280,59 @@ class StocksTelegramManager(IObserver):
 
         except Exception as e:
             logger.error(f"Error in send_orders: {e}", exc_info=True)
+            update.message.reply_text(f"Error: {str(e)}")
+
+    def manual_scan(self, update, context):
+        """Handle /scan command - Run pre-market scan on demand"""
+        try:
+            update.message.reply_text("📊 Starting manual pre-market scan...")
+
+            # Trigger the pre-market scan (synchronous - will complete before returning)
+            event = {FIELD_TYPE: EVENT_TYPE_PRE_MARKET_SCAN}
+            self.subject.notify(event)
+
+        except Exception as e:
+            logger.error(f"Error in manual_scan: {e}", exc_info=True)
+            update.message.reply_text(f"Error: {str(e)}")
+
+    def list_candidates(self, update, context):
+        """Handle /list command - Show latest scan results"""
+        try:
+            from datetime import date
+
+            # Get today's date - container is already in PST
+            today = date.today()
+
+            # Get candidates from database
+            database_manager = StocksDatabaseManager(self.application_context)
+            candidates = database_manager.get_candidates(today, selected_only=False)
+
+            if not candidates:
+                update.message.reply_text("No scan results for today")
+                return
+
+            # Format as PrettyTable with column headers
+            table = PrettyTable(['Rank', 'Symbol', 'Change'])
+            table.align['Rank'] = 'r'    # Right align rank
+            table.align['Symbol'] = 'l'  # Left align symbol
+            table.align['Change'] = 'r'  # Right align change
+
+            # Add rows: rank, symbol, pre_market_change
+            for candidate in candidates[:25]:  # Limit to 25 for readability
+                table.add_row([
+                    candidate.rank,
+                    candidate.symbol,
+                    f"{candidate.pre_market_change:+.1f}%"
+                ])
+
+            # Send using HTML formatting
+            update.message.reply_text(
+                f"<pre>{table}</pre>",
+                parse_mode=ParseMode.HTML
+            )
+
+        except Exception as e:
+            logger.error(f"Error in list_candidates: {e}", exc_info=True)
             update.message.reply_text(f"Error: {str(e)}")
 
     def error(self, update, context):

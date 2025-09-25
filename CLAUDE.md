@@ -54,3 +54,96 @@ This pattern ensures:
 - Consistent error handling
 - No missed errors
 - Proper notifications to user
+
+## MCP Tool Usage with curl
+
+### Docker Infrastructure
+- **Active Docker Context**: tensor (ssh://frankg@192.168.86.30)
+- **Container**: orb-stocks
+- **Port Mapping**: External 8005 → Internal 8003
+- **Base URL**: http://192.168.86.30:8005
+
+### Available MCP Tools
+
+#### 1. Run Pre-Market Scan
+```bash
+curl -X POST http://192.168.86.30:8005/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "run_pre_market_scan",
+      "arguments": {
+        "min_price": 5.0,
+        "max_price": 100.0,
+        "min_volume": 100000,
+        "min_pre_market_change": 2.0,
+        "max_results": 50
+      }
+    }
+  }'
+```
+
+#### 2. Get Current Candidates
+```bash
+curl -X POST http://192.168.86.30:8005/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "get_current_candidates",
+      "arguments": {
+        "limit": 25
+      }
+    }
+  }'
+```
+
+#### 3. Get Scanner Types
+```bash
+curl -X POST http://192.168.86.30:8005/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "get_scanner_types",
+      "arguments": {}
+    }
+  }'
+```
+
+#### 4. Get Opening Ranges
+```bash
+curl -X POST http://192.168.86.30:8005/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "get_opening_ranges",
+      "arguments": {
+        "date": "2025-09-25",
+        "days_back": 3,
+        "include_all": false
+      }
+    }
+  }'
+```
+
+### Check Server Status
+```bash
+curl http://192.168.86.30:8005/
+```
+
+### Notes
+- All MCP tools use the `/mcp` endpoint with JSON-RPC 2.0 protocol
+- The server runs inside the orb-stocks container
+- Use port 8005 when calling from outside the Docker network
+- Responses are in JSON format with either "result" or "error" fields

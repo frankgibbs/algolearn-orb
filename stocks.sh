@@ -15,4 +15,5 @@ python stocks.py \
   --min-price $MIN_PRICE \
   --max-price $MAX_PRICE \
   --min-volume $MIN_VOLUME \
+  --min-pre-market-change $MIN_PRE_MARKET_CHANGE \
   --stagnation-minutes $STAGNATION_MINUTES

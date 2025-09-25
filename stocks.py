@@ -188,6 +188,7 @@ def main():
     parser.add_argument("--min-price", required=True, type=float, help="Minimum stock price")
     parser.add_argument("--max-price", required=True, type=float, help="Maximum stock price")
     parser.add_argument("--min-volume", required=True, type=int, help="Minimum daily volume")
+    parser.add_argument("--min-pre-market-change", required=True, type=float, help="Minimum pre-market change percentage")
     parser.add_argument("--stagnation-minutes", required=True, type=int, help="Minutes before position is considered stagnant")
     parser.add_argument("--trailing-stop-ratio", type=float, default=0.5, help="Trailing stop ratio (default: 0.5)")
     parser.add_argument("--take-profit-ratio", type=float, default=1.5, help="Take profit ratio (default: 1.5)")
@@ -218,6 +219,7 @@ def main():
         CONFIG_MIN_PRICE: args.min_price,
         CONFIG_MAX_PRICE: args.max_price,
         CONFIG_MIN_VOLUME: args.min_volume,
+        CONFIG_MIN_PRE_MARKET_CHANGE: args.min_pre_market_change,
         CONFIG_STAGNATION_THRESHOLD_MINUTES: args.stagnation_minutes,
         CONFIG_TRAILING_STOP_RATIO: args.trailing_stop_ratio,
         CONFIG_TAKE_PROFIT_RATIO: args.take_profit_ratio,

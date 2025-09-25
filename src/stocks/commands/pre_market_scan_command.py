@@ -32,11 +32,11 @@ class PreMarketScanCommand(Command):
         strategy_service = StocksStrategyService(self.application_context)
         scanner_service = StocksScannerService(self.application_context)
 
-        # Get and validate configuration parameters
-        min_price = self._get_validated_config_value(CONFIG_MIN_PRICE, 5.0, "minimum price")
-        max_price = self._get_validated_config_value(CONFIG_MAX_PRICE, 200.0, "maximum price")
-        min_volume = self._get_validated_config_value(CONFIG_MIN_VOLUME, 100000, "minimum volume")
-        min_pre_market_change = self._get_validated_config_value(CONFIG_MIN_PRE_MARKET_CHANGE, 2.0, "minimum pre-market change %")
+        # Get and validate configuration parameters - ALL REQUIRED
+        min_price = self._get_required_config_value(CONFIG_MIN_PRICE, "minimum price")
+        max_price = self._get_required_config_value(CONFIG_MAX_PRICE, "maximum price")
+        min_volume = self._get_required_config_value(CONFIG_MIN_VOLUME, "minimum volume")
+        min_pre_market_change = self._get_required_config_value(CONFIG_MIN_PRE_MARKET_CHANGE, "minimum pre-market change %")
 
         # Validate price range
         if min_price >= max_price:
@@ -77,41 +77,32 @@ class PreMarketScanCommand(Command):
         )
 
 
-    def _get_validated_config_value(self, config_key, default_value, description):
+    def _get_required_config_value(self, config_key, description):
         """
-        Get configuration value with validation and default fallback
+        Get required configuration value - fails loudly if missing
 
         Args:
             config_key: Configuration key to retrieve (required)
-            default_value: Default value if config is missing (required)
-            description: Description for logging (required)
+            description: Description for error message (required)
 
         Returns:
-            Configuration value or default
+            Configuration value
 
         Raises:
-            ValueError: If any parameter is None
+            ValueError: If config_key or description is None, or if config is missing
         """
         if config_key is None:
             raise ValueError("config_key is REQUIRED")
-        if default_value is None:
-            raise ValueError("default_value is REQUIRED")
         if description is None:
             raise ValueError("description is REQUIRED")
 
-        value = self.state_manager.get_config_value(config_key)
+        try:
+            value = self.state_manager.get_config_value(config_key)
+        except KeyError:
+            raise ValueError(f"Configuration {config_key} ({description}) is REQUIRED but not configured")
 
         if value is None:
-            logger.warning(f"Configuration {config_key} not set, using default {description}: {default_value}")
-            return default_value
-
-        # Type validation
-        if isinstance(default_value, (int, float)):
-            try:
-                value = type(default_value)(value)
-            except (ValueError, TypeError):
-                logger.error(f"Invalid {description} value '{value}', using default: {default_value}")
-                return default_value
+            raise ValueError(f"Configuration {config_key} ({description}) is REQUIRED but not configured")
 
         logger.info(f"Using configured {description}: {value}")
         return value

@@ -341,6 +341,10 @@ class StocksScannerService:
         """
         Apply additional filtering after scanner results
 
+        Note: Distance-based filtering removed because IB scanner distance field
+        is empty during market hours. Scanner results (TOP_PERC_GAIN, MOST_ACTIVE,
+        HOT_BY_VOLUME) are already pre-filtered by IB.
+
         Args:
             results (list): Scanner results
             criteria (dict): Filter criteria
@@ -349,44 +353,16 @@ class StocksScannerService:
             list: Filtered results
         """
         if not results:
+            logger.error("No results to filter")
             return []
 
-        filtered = []
-
-        # Get required minimum change parameter
-        min_change_pct = criteria.get("min_pre_market_change")
-        if min_change_pct is None:
-            raise ValueError("min_pre_market_change is REQUIRED in criteria")
-
-        for result in results:
-            try:
-                # Parse percentage change from distance field
-                distance = result.get('distance', '0.0')
-                try:
-                    change_pct = float(distance.replace('%', ''))
-                except (ValueError, AttributeError):
-                    change_pct = 0.0
-
-                # Filter by minimum change
-                if abs(change_pct) >= min_change_pct:
-                    filtered.append(result)
-                else:
-                    logger.debug(f"Filtered out {result.get('symbol')} - change {change_pct}% < {min_change_pct}%")
-
-            except Exception as e:
-                logger.error(f"Error filtering result: {e}")
-                continue
-
-        # Sort by absolute percentage change (highest first)
-        filtered.sort(key=lambda x: abs(float(x.get('distance', '0').replace('%', ''))), reverse=True)
-
-        # Limit to max_results
+        # Get required max_results parameter
         max_results = criteria.get("max_results")
         if max_results is None:
             raise ValueError("max_results is REQUIRED in criteria")
 
-        if len(filtered) > max_results:
-            filtered = filtered[:max_results]
+        # Just limit to max_results - trust the scanner results from IB
+        filtered = results[:max_results] if len(results) > max_results else results
 
-        logger.info(f"Post-scan filtering: {len(results)} -> {len(filtered)} candidates")
+        logger.info(f"Post-scan filtering: {len(results)} -> {len(filtered)} candidates (removed distance filtering - field empty during market hours)")
         return filtered
