@@ -386,12 +386,18 @@ class StocksDatabaseManager(IObserver):
 
         session = self.get_session()
         try:
+            # Convert IB action to position direction
+            action_to_direction = {"BUY": "LONG", "SELL": "SHORT"}
+            direction = action_to_direction.get(order_result['action'])
+            if not direction:
+                raise ValueError(f"Invalid action: {order_result['action']}")
+
             position = Position(
                 id=order_result['parent_order_id'],  # Explicit ID
                 stop_order_id=order_result['stop_order_id'],
                 opening_range_id=opening_range_id,
                 symbol=order_result['symbol'],
-                direction=order_result['action'],  # 'BUY' -> 'LONG', 'SELL' -> 'SHORT'
+                direction=direction,  # Correctly converts 'BUY' -> 'LONG', 'SELL' -> 'SHORT'
                 shares=order_result['quantity'],
                 stop_loss_price=stop_loss_price,
                 take_profit_price=take_profit_price,

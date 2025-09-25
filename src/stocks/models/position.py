@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean, ForeignKey
 from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 from src import Base
 
 class Position(Base):
@@ -44,6 +44,13 @@ class Position(Base):
 
     # Relationship to opening range
     opening_range = relationship("OpeningRange", back_populates="positions")
+
+    @validates('direction')
+    def validate_direction(self, key, direction):
+        """Validate that direction is LONG or SHORT"""
+        if direction not in ('LONG', 'SHORT'):
+            raise ValueError(f"Position direction must be 'LONG' or 'SHORT', got '{direction}'")
+        return direction
 
     @property
     def current_stop_price(self):

@@ -24,7 +24,7 @@ class TimeBasedExitCommand(Command):
 
         # Validate market hours
         pacific_tz = pytz.timezone('US/Pacific')
-        now = datetime.now(pacific_tz)
+        now = datetime.now()
 
         if not self._is_market_hours(now):
             return
@@ -183,7 +183,7 @@ class TimeBasedExitCommand(Command):
         Check if we're in market hours for time-based exits
 
         Args:
-            now: Current datetime in Pacific timezone (required)
+            now: Current datetime (required)
 
         Returns:
             Boolean indicating if it's market hours
