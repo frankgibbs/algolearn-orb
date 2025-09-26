@@ -548,3 +548,34 @@ class StocksDatabaseManager(IObserver):
             raise RuntimeError(f"Failed to delete positions: {e}")
         finally:
             session.close()
+
+
+    def get_all_positions(self, date_from=None, date_to=None, symbol=None):
+        """
+        Get all positions with optional filtering
+
+        Args:
+            date_from: Start date filter (optional)
+            date_to: End date filter (optional)
+            symbol: Symbol filter (optional)
+
+        Returns:
+            List of all Position objects
+        """
+        session = self.get_session()
+        try:
+            query = session.query(Position)
+
+            if date_from:
+                query = query.filter(Position.created_at >= date_from)
+
+            if date_to:
+                query = query.filter(Position.created_at <= date_to)
+
+            if symbol:
+                query = query.filter(Position.symbol == symbol)
+
+            return query.order_by(Position.created_at.desc()).all()
+
+        finally:
+            session.close()

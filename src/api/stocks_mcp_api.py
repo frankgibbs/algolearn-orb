@@ -168,6 +168,37 @@ class StocksMcpApi:
                         "required": []
                     }
                 ),
+                Tool(
+                    name="get_all_positions",
+                    description="Retrieve all positions regardless of status",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "date_from": {
+                                "type": "string",
+                                "description": "Start date filter (YYYY-MM-DD format)",
+                                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                            },
+                            "date_to": {
+                                "type": "string",
+                                "description": "End date filter (YYYY-MM-DD format)",
+                                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+                            },
+                            "symbol": {
+                                "type": "string",
+                                "description": "Filter by specific symbol (e.g., AAPL)"
+                            },
+                            "days_back": {
+                                "type": "integer",
+                                "description": "Number of days back from today (alternative to date_from/date_to)",
+                                "default": 1,
+                                "minimum": 1,
+                                "maximum": 365
+                            }
+                        },
+                        "required": []
+                    }
+                ),
             ]
 
         @self.server.call_tool()
@@ -185,6 +216,8 @@ class StocksMcpApi:
                     return await self._get_stock_bars(arguments or {})
                 elif name == "get_opening_ranges":
                     return await self._get_opening_ranges(arguments or {})
+                elif name == "get_all_positions":
+                    return await self._get_all_positions(arguments or {})
                 else:
                     raise ValueError(f"Unknown tool: {name}")
             except Exception as e:
@@ -540,6 +573,82 @@ class StocksMcpApi:
             logger.error(f"Error in _get_opening_ranges: {e}")
             return [TextContent(type="text", text=f"Error getting opening ranges: {str(e)}", meta={})]
 
+
+    async def _get_all_positions(self, args: dict) -> list[TextContent]:
+        """Get all positions regardless of status"""
+        try:
+            import pytz
+            from datetime import datetime, timedelta
+
+            # Get parameters
+            date_from_str = args.get("date_from")
+            date_to_str = args.get("date_to")
+            symbol = args.get("symbol")
+            days_back = args.get("days_back")
+
+            # Parse dates or use days_back - only filter if explicitly provided
+            now = datetime.now()
+
+            if date_from_str and date_to_str:
+                date_from = datetime.strptime(date_from_str, '%Y-%m-%d').date()
+                date_to = datetime.strptime(date_to_str, '%Y-%m-%d').date()
+            elif days_back:
+                date_from = (now - timedelta(days=days_back)).date()
+                date_to = now.date()
+            else:
+                # No date filtering - get all positions
+                date_from = None
+                date_to = None
+
+            # Get all positions from database
+            positions = self.database_manager.get_all_positions(
+                date_from=date_from,
+                date_to=date_to,
+                symbol=symbol
+            )
+
+            # Format positions
+            positions_data = []
+            for position in positions:
+                position_data = {
+                    "id": position.id,
+                    "symbol": position.symbol,
+                    "direction": position.direction,
+                    "shares": position.shares,
+                    "status": position.status,
+                    "entry_time": position.entry_time.isoformat() if position.entry_time else None,
+                    "entry_price": position.entry_price,
+                    "exit_time": position.exit_time.isoformat() if position.exit_time else None,
+                    "exit_price": position.exit_price,
+                    "exit_reason": position.exit_reason,
+                    "realized_pnl": position.realized_pnl,
+                    "stop_loss_price": position.stop_loss_price,
+                    "take_profit_price": position.take_profit_price,
+                    "range_size": position.range_size,
+                    "created_at": position.created_at.isoformat() if position.created_at else None,
+                    "updated_at": position.updated_at.isoformat() if position.updated_at else None
+                }
+                positions_data.append(position_data)
+
+            # Build result
+            result = {
+                "timestamp": now.isoformat(),
+                "query_info": {
+                    "date_from": date_from.isoformat() if date_from else None,
+                    "date_to": date_to.isoformat() if date_to else None,
+                    "symbol_filter": symbol,
+                    "days_back": days_back
+                },
+                "total_positions": len(positions_data),
+                "positions": positions_data
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_all_positions: {e}")
+            return [TextContent(type="text", text=f"Error getting all positions: {str(e)}", meta={})]
+
     def run(self, host="0.0.0.0", port=8003):
         """Run the MCP server with both HTTP endpoints and MCP protocol support"""
         import logging
@@ -571,7 +680,8 @@ class StocksMcpApi:
                     "run_pre_market_scan",
                     "get_current_candidates",
                     "get_scanner_types",
-                    "get_opening_ranges"
+                    "get_opening_ranges",
+                    "get_all_positions"
                 ]
             }
 
@@ -685,6 +795,32 @@ class StocksMcpApi:
                                         }
                                     }
                                 },
+                                {
+                                    "name": "get_all_positions",
+                                    "description": "Retrieve all positions regardless of status",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "date_from": {
+                                                "type": "string",
+                                                "description": "Start date filter (YYYY-MM-DD format)"
+                                            },
+                                            "date_to": {
+                                                "type": "string",
+                                                "description": "End date filter (YYYY-MM-DD format)"
+                                            },
+                                            "symbol": {
+                                                "type": "string",
+                                                "description": "Filter by specific symbol (e.g., AAPL)"
+                                            },
+                                            "days_back": {
+                                                "type": "integer",
+                                                "description": "Number of days back from today",
+                                                "default": 1
+                                            }
+                                        }
+                                    }
+                                },
                             ]
                         }
                     }
@@ -705,6 +841,8 @@ class StocksMcpApi:
                         result = await self._get_stock_bars(arguments)
                     elif tool_name == "get_opening_ranges":
                         result = await self._get_opening_ranges(arguments)
+                    elif tool_name == "get_all_positions":
+                        result = await self._get_all_positions(arguments)
                     else:
                         return {
                             "jsonrpc": "2.0",

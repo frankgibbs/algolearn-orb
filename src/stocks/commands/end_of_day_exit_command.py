@@ -3,7 +3,6 @@ from src.core.constants import *
 from src import logger
 import pytz
 from datetime import datetime
-from prettytable import PrettyTable
 
 class EndOfDayExitCommand(Command):
     """Handle end-of-day position closure and daily reporting"""
@@ -132,22 +131,8 @@ class EndOfDayExitCommand(Command):
 
         logger.info(f"Sending EOD notification for {len(closed_positions)} positions initiated for closure")
 
-        # Create simple table with Symbol, Direction, Status
-        table = PrettyTable()
-        table.field_names = ["Symbol", "Direction", "Status"]
-        table.align = "r"
-
-        for pos in closed_positions:
-            table.add_row([
-                pos.symbol,
-                pos.direction,
-                "Closing..."
-            ])
-
-        # Send notification with table
-        message = f"🕐 **EOD CLOSURES:** {len(closed_positions)} positions initiated for closure\n"
-        message += f"Converting stop orders to market orders for immediate execution\n\n"
-        message += f"```\n{table}\n```"
+        # Send simple notification message
+        message = "🕐 **EOD CLOSURE:** Initiating end-of-day position closures"
 
         self.state_manager.sendTelegramMessage(message)
         logger.info(f"EOD notification sent: {len(closed_positions)} positions initiated for closure")

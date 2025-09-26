@@ -3,18 +3,46 @@ Static stock configuration for ORB strategy
 Contains the list of stocks to trade and stock-specific parameters
 """
 
-# Static list of stocks to trade
+# Static list of stocks to trade - diversified across sectors
 STOCK_SYMBOLS = [
+    # Technology (keep best performers)
     "AAPL",  # Apple Inc.
     "MSFT",  # Microsoft Corporation
     "GOOGL", # Alphabet Inc. Class A
-    "AMZN",  # Amazon.com Inc.
     "NVDA",  # NVIDIA Corporation
     "TSLA",  # Tesla Inc.
     "META",  # Meta Platforms Inc.
     "AMD",   # Advanced Micro Devices Inc.
+
+    # Financial Sector
+    "JPM",   # JPMorgan Chase & Co.
+    "BAC",   # Bank of America Corp.
+    "GS",    # Goldman Sachs Group Inc.
+
+    # Healthcare
+    "JNJ",   # Johnson & Johnson
+    "UNH",   # UnitedHealth Group Inc.
+    "PFE",   # Pfizer Inc.
+
+    # Energy
+    "XOM",   # Exxon Mobil Corporation
+    "CVX",   # Chevron Corporation
+
+    # Consumer & Retail
+    "WMT",   # Walmart Inc.
+    "HD",    # Home Depot Inc.
+    "MCD",   # McDonald's Corporation
+
+    # Industrial
+    "BA",    # Boeing Company
+    "CAT",   # Caterpillar Inc.
+
+    # ETFs (Market & Defensive)
     "SPY",   # SPDR S&P 500 ETF Trust
     "QQQ",   # Invesco QQQ Trust
+    "XLU",   # Utilities Select Sector SPDR
+    "XLP",   # Consumer Staples Select Sector SPDR
+    "GLD",   # SPDR Gold Trust
 ]
 
 # Stock-specific configurations (optional overrides)
@@ -37,6 +65,82 @@ STOCK_CONFIGS = {
     },
     "QQQ": {
         "min_range_pct": 0.4,  # Slightly more volatile than SPY
+        "max_range_pct": 2.5
+    },
+
+    # Financial Sector - Lower volatility
+    "JPM": {
+        "min_range_pct": 0.3,
+        "max_range_pct": 2.0
+    },
+    "BAC": {
+        "min_range_pct": 0.3,
+        "max_range_pct": 2.0
+    },
+    "GS": {
+        "min_range_pct": 0.4,  # Slightly more volatile
+        "max_range_pct": 2.5
+    },
+
+    # Healthcare - Medium volatility
+    "JNJ": {
+        "min_range_pct": 0.4,
+        "max_range_pct": 2.5
+    },
+    "UNH": {
+        "min_range_pct": 0.4,
+        "max_range_pct": 2.5
+    },
+    "PFE": {
+        "min_range_pct": 0.4,
+        "max_range_pct": 2.5
+    },
+
+    # Energy - Higher volatility
+    "XOM": {
+        "min_range_pct": 0.6,
+        "max_range_pct": 3.5
+    },
+    "CVX": {
+        "min_range_pct": 0.6,
+        "max_range_pct": 3.5
+    },
+
+    # Consumer & Retail - Medium volatility
+    "WMT": {
+        "min_range_pct": 0.4,
+        "max_range_pct": 2.5
+    },
+    "HD": {
+        "min_range_pct": 0.4,
+        "max_range_pct": 2.5
+    },
+    "MCD": {
+        "min_range_pct": 0.4,
+        "max_range_pct": 2.5
+    },
+
+    # Industrial - Higher volatility
+    "BA": {
+        "min_range_pct": 0.6,
+        "max_range_pct": 3.5
+    },
+    "CAT": {
+        "min_range_pct": 0.6,
+        "max_range_pct": 3.5
+    },
+
+    # Defensive ETFs - Lower volatility
+    "XLU": {
+        "min_range_pct": 0.3,
+        "max_range_pct": 2.0
+    },
+    "XLP": {
+        "min_range_pct": 0.3,
+        "max_range_pct": 2.0
+    },
+    "GLD": {
+        "min_range_pct": 0.4,
         "max_range_pct": 2.5
     }
 }

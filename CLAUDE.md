@@ -162,6 +162,41 @@ curl -X POST http://192.168.86.30:8005/mcp \
   }'
 ```
 
+#### 5. Get All Positions
+```bash
+curl -X POST http://192.168.86.30:8005/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "get_all_positions",
+      "arguments": {
+        "days_back": 1
+      }
+    }
+  }'
+```
+
+##### Get all positions for specific symbol:
+```bash
+curl -X POST http://192.168.86.30:8005/mcp \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "tools/call",
+    "params": {
+      "name": "get_all_positions",
+      "arguments": {
+        "symbol": "AAPL",
+        "days_back": 7
+      }
+    }
+  }'
+```
+
 ### Check Server Status
 ```bash
 curl http://192.168.86.30:8005/
