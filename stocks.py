@@ -195,6 +195,10 @@ def main():
     parser.add_argument("--min-range-pct", type=float, default=0.5, help="Minimum opening range %% (default: 0.5)")
     parser.add_argument("--max-range-pct", type=float, default=3.0, help="Maximum opening range %% (default: 3.0)")
 
+    # Volume analysis parameters
+    parser.add_argument("--volume-lookback-days", type=int, default=30, help="Calendar days for volume analysis (default: 30)")
+    parser.add_argument("--volume-zscore-threshold", type=float, default=2.0, help="Z-score threshold for volume confirmation (default: 2.0)")
+
     args = parser.parse_args()
 
     subject = Subject()
@@ -224,7 +228,10 @@ def main():
         CONFIG_TRAILING_STOP_RATIO: args.trailing_stop_ratio,
         CONFIG_TAKE_PROFIT_RATIO: args.take_profit_ratio,
         CONFIG_MIN_RANGE_PCT: args.min_range_pct,
-        CONFIG_MAX_RANGE_PCT: args.max_range_pct
+        CONFIG_MAX_RANGE_PCT: args.max_range_pct,
+        # Volume analysis parameters
+        CONFIG_ORB_VOLUME_LOOKBACK_DAYS: args.volume_lookback_days,
+        CONFIG_ORB_VOLUME_ZSCORE_THRESHOLD: args.volume_zscore_threshold
     }
 
     client = IBClient(subject, config)

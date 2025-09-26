@@ -146,8 +146,10 @@ class TimeBasedExitCommand(Command):
             )
 
             # Send notification that exit was initiated
+            stagnation_threshold = self.state_manager.get_config_value(CONFIG_STAGNATION_THRESHOLD_MINUTES)
+            duration_str = self._format_duration_minutes(stagnation_threshold)
             self.state_manager.sendTelegramMessage(
-                f"⏱️ TIME EXIT initiated: {position.symbol} - converting stop to market order (>90min stagnant)"
+                f"⏱️ TIME EXIT initiated: {position.symbol} - converting stop to market order (>{duration_str} stagnant)"
             )
 
             logger.info(f"Stop order converted to market for position {position.id}")
@@ -203,3 +205,21 @@ class TimeBasedExitCommand(Command):
 
         # Check weekday
         return now.weekday() < 5
+
+    def _format_duration_minutes(self, minutes):
+        """
+        Format minutes to readable string
+
+        Args:
+            minutes: Duration in minutes (required)
+
+        Returns:
+            String representation (e.g., '90min', '240min')
+
+        Raises:
+            ValueError: If minutes is None
+        """
+        if minutes is None:
+            raise ValueError("minutes is REQUIRED")
+
+        return f"{int(minutes)}min"

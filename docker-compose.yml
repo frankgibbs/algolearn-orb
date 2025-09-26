@@ -23,7 +23,7 @@ services:
       - MAX_PRICE=100.00
       - MIN_VOLUME=100000
       - MIN_PRE_MARKET_CHANGE=2.0
-      - STAGNATION_MINUTES=60
+      - STAGNATION_MINUTES=240
     networks:
       - algolearn_network
 

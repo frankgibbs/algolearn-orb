@@ -71,6 +71,7 @@ class StocksTelegramManager(IObserver):
             dp.add_handler(CommandHandler("margin", self.send_margins))
             dp.add_handler(CommandHandler("scan", self.manual_scan))
             dp.add_handler(CommandHandler("list", self.list_candidates))
+            dp.add_handler(CommandHandler("va", self.volume_analysis))
 
             # Add error handler
             dp.add_error_handler(self.error)
@@ -437,4 +438,22 @@ class StocksTelegramManager(IObserver):
 
         except Exception as e:
             logger.error(f"Error in /margin command: {e}", exc_info=True)
+            update.message.reply_text(f"Error: {str(e)}")
+
+    def volume_analysis(self, update, context):
+        """Handle /va [symbol] command - analyze volume for symbol"""
+        try:
+            symbol = None
+            if context.args:
+                symbol = context.args[0].upper()
+            else:
+                update.message.reply_text("Usage: /va SYMBOL")
+                return
+
+            # Publish volume analysis event through proper event system
+            event = {FIELD_TYPE: EVENT_TYPE_VOLUME_ANALYSIS, FIELD_DATA: symbol}
+            self.state_manager.subject.notify(event)
+
+        except Exception as e:
+            logger.error(f"Error in /va command: {e}", exc_info=True)
             update.message.reply_text(f"Error: {str(e)}")

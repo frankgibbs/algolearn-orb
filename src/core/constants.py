@@ -159,6 +159,13 @@ CONFIG_MAX_PRICE = "max_price"
 CONFIG_MIN_VOLUME = "min_volume"
 CONFIG_MIN_PRE_MARKET_CHANGE = "min_pre_market_change"
 
+# Volume analysis configuration for ORB strategy
+CONFIG_ORB_VOLUME_LOOKBACK_DAYS = "orb_volume_lookback_days"  # Calendar days for historical data
+CONFIG_ORB_VOLUME_ZSCORE_THRESHOLD = "orb_volume_zscore_threshold"  # Z-score threshold for significance
+
+# Volume analysis event
+EVENT_TYPE_VOLUME_ANALYSIS = "EVENT_TYPE_VOLUME_ANALYSIS"
+
 FIELD_ORDER_ID = "order_id"
 FIELD_ORDER = "order"
 FIELD_ORDERS = "orders"

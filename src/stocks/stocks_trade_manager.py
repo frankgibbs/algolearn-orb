@@ -12,6 +12,7 @@ from src.stocks.commands.strategies.orb_signal_command import ORBSignalCommand
 from src.stocks.commands.end_of_day_exit_command import EndOfDayExitCommand
 from src.stocks.commands.time_based_exit_command import TimeBasedExitCommand
 from src.stocks.commands.move_stop_order_command import MoveStopOrderCommand
+from src.stocks.commands.analysis.volume_analysis_command import VolumeAnalysisCommand
 
 class StocksTradeManager(IObserver):
 
@@ -39,6 +40,9 @@ class StocksTradeManager(IObserver):
         self.command_invoker.register_command(EVENT_TYPE_END_OF_DAY_EXIT, EndOfDayExitCommand(self.application_context))
         self.command_invoker.register_command(EVENT_TYPE_TIME_BASED_EXIT, TimeBasedExitCommand(self.application_context))
         self.command_invoker.register_command(EVENT_TYPE_MOVE_STOP_ORDER, MoveStopOrderCommand(self.application_context))
+
+        # Register analysis commands
+        self.command_invoker.register_command(EVENT_TYPE_VOLUME_ANALYSIS, VolumeAnalysisCommand(self.application_context))
 
     def notify(self, observable, *args):
 

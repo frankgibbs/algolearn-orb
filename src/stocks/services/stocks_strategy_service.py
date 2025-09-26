@@ -2,6 +2,7 @@ from src import logger
 from src.stocks.models.position import Position
 from src.core.constants import CONFIG_ORB_TIMEFRAME, FIELD_STOCK_MARGIN_REQUIREMENTS
 from datetime import datetime, date
+from sqlalchemy import func
 import pytz
 
 class StocksStrategyService:
@@ -588,6 +589,40 @@ class StocksStrategyService:
 
             has_position = position_count > 0
             logger.debug(f"Symbol {symbol} has open/pending positions: {has_position}")
+            return has_position
+        finally:
+            session.close()
+
+    def has_position_today(self, symbol):
+        """
+        Check if a specific symbol has any position (PENDING, OPEN, or CLOSED) today
+
+        Args:
+            symbol: Stock symbol to check (required)
+
+        Returns:
+            Boolean indicating if symbol has any position today
+
+        Raises:
+            ValueError: If symbol is None or empty
+            RuntimeError: If database query fails
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+
+        # Query positions for this specific symbol created today (any status)
+        # Let exceptions propagate per CLAUDE.md pattern
+        session = self.database_manager.get_session()
+        try:
+            today = date.today()
+
+            position_count = session.query(Position).filter(
+                Position.symbol == symbol,
+                func.date(Position.entry_time) == today
+            ).count()
+
+            has_position = position_count > 0
+            logger.debug(f"Symbol {symbol} has positions today: {has_position}")
             return has_position
         finally:
             session.close()

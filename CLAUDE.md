@@ -2,6 +2,31 @@
 
 ## Error Handling Pattern
 
+### Configuration Values - NO SILENT FALLBACKS
+- **NEVER** use `or` operator for silent config defaults (e.g., `get_config_value(CONFIG_X) or 20`)
+- **DO** raise ValueError when required configs are missing
+- **DO** validate config values are reasonable (not None, not negative for counts, etc.)
+- **DO** include the missing config name in the exception message
+
+#### Wrong Pattern - Silent Fallback:
+```python
+# NEVER DO THIS - hides missing configuration
+lookback_bars = self.state_manager.get_config_value(CONFIG_ORB_VOLUME_LOOKBACK) or 20
+risk_pct = self.state_manager.get_config_value(CONFIG_RISK_PERCENTAGE) or 1.0
+```
+
+#### Correct Pattern - Explicit Validation:
+```python
+# DO THIS - fail fast with clear error
+lookback_bars = self.state_manager.get_config_value(CONFIG_ORB_VOLUME_LOOKBACK)
+if lookback_bars is None:
+    raise ValueError("CONFIG_ORB_VOLUME_LOOKBACK is REQUIRED")
+
+risk_pct = self.state_manager.get_config_value(CONFIG_RISK_PERCENTAGE)
+if risk_pct is None or risk_pct <= 0:
+    raise ValueError("CONFIG_RISK_PERCENTAGE is REQUIRED and must be positive")
+```
+
 ### Commands and Services
 - **DO NOT** use try/catch blocks in commands unless you're handling a specific recoverable error
 - **DO** raise descriptive exceptions when operations fail

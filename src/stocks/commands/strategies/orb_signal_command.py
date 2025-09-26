@@ -1,6 +1,7 @@
 from src.core.command import Command
 from src.core.constants import *
 from src.stocks.services.stocks_strategy_service import StocksStrategyService
+from src.stocks.services.volume_analysis_service import VolumeAnalysisService
 from src.stocks.stocks_config import STOCK_SYMBOLS
 from src.core.ibclient import IBClient
 from src import logger
@@ -73,9 +74,9 @@ class ORBSignalCommand(Command):
         if now is None:
             raise ValueError("now is REQUIRED")
 
-        # Skip if symbol already has open/pending position
-        if strategy_service.has_open_position(symbol):
-            logger.info(f"Skipping {symbol} - already has open/pending position")
+        # Skip if symbol already has any position today (PENDING, OPEN, or CLOSED)
+        if strategy_service.has_position_today(symbol):
+            logger.info(f"Skipping {symbol} - already has position today")
             return False
 
         # Get opening range for this stock - let exception propagate
@@ -121,6 +122,11 @@ class ORBSignalCommand(Command):
         breakout_signal = self._check_breakout_signal(opening_range, previous_close)
 
         if breakout_signal['signal'] != 'NONE':
+            # Check volume confirmation before position limits
+            if not self._check_volume_confirmation(symbol, previous_bar, timeframe_minutes, ib_client):
+                logger.info(f"{symbol} - Breakout rejected: Volume confirmation failed")
+                return False
+
             # Check position limits before generating signal
             if not self._check_position_limits():
                 logger.info(f"Position limits reached, skipping {symbol}")
@@ -306,3 +312,63 @@ class ORBSignalCommand(Command):
         else:
             logger.warning(f"Unsupported ORB timeframe: {timeframe_minutes} minutes")
             return False
+
+    def _check_volume_confirmation(self, symbol, current_bar, timeframe_minutes, ib_client):
+        """
+        Check if volume meets Z-Score threshold for breakout confirmation
+
+        Args:
+            symbol: Stock symbol (required)
+            current_bar: Current bar data (required)
+            timeframe_minutes: Bar timeframe in minutes (required)
+            ib_client: IB client instance (required)
+
+        Returns:
+            Boolean indicating if volume is confirmed
+
+        Raises:
+            ValueError: If configuration is missing or invalid
+        """
+        if symbol is None:
+            raise ValueError("symbol is REQUIRED")
+        if current_bar is None:
+            raise ValueError("current_bar is REQUIRED")
+        if timeframe_minutes is None or timeframe_minutes <= 0:
+            raise ValueError("timeframe_minutes is REQUIRED and must be positive")
+        if ib_client is None:
+            raise ValueError("ib_client is REQUIRED")
+
+        # Get volume configuration
+        lookback_days = self.state_manager.get_config_value(CONFIG_ORB_VOLUME_LOOKBACK_DAYS)
+        if lookback_days is None or lookback_days <= 0:
+            raise ValueError("CONFIG_ORB_VOLUME_LOOKBACK_DAYS is REQUIRED and must be positive")
+
+        zscore_threshold = self.state_manager.get_config_value(CONFIG_ORB_VOLUME_ZSCORE_THRESHOLD)
+        if zscore_threshold is None or zscore_threshold <= 0:
+            raise ValueError("CONFIG_ORB_VOLUME_ZSCORE_THRESHOLD is REQUIRED and must be positive")
+
+        # Get extended historical data for volume analysis using day-based duration
+        bars_df_extended = ib_client.get_stock_bars_extended(
+            symbol=symbol,
+            duration_days=lookback_days,
+            bar_size=f"{timeframe_minutes} mins"
+        )
+
+        # Initialize volume service and calculate Z-Score
+        volume_service = VolumeAnalysisService(self.application_context)
+        volume_zscore = volume_service.calculate_volume_zscore(
+            bars_df=bars_df_extended,
+            current_bar=current_bar,
+            lookback_days=lookback_days,
+            timeframe_minutes=timeframe_minutes
+        )
+
+        # Check if volume is statistically significant
+        is_significant = volume_service.is_volume_significant(volume_zscore, zscore_threshold)
+
+        if is_significant:
+            logger.info(f"{symbol} - ✅ Volume confirmed: Z-Score={volume_zscore:.2f}σ (threshold: {zscore_threshold}σ)")
+        else:
+            logger.info(f"{symbol} - ❌ Volume rejected: Z-Score={volume_zscore:.2f}σ below threshold {zscore_threshold}σ")
+
+        return is_significant

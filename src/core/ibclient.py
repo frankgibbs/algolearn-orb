@@ -1458,3 +1458,45 @@ class IBClient(EWrapper, EClient):
 
         return margin_per_share
 
+    def get_stock_bars_extended(self, symbol, duration_days=30, bar_size="15 mins", timeout=10):
+        """
+        Get historical bars for extended periods using day duration
+
+        Args:
+            symbol: Stock symbol
+            duration_days: Number of calendar days to fetch
+            bar_size: Bar size (e.g., "15 mins", "30 mins")
+            timeout: Timeout in seconds
+
+        Returns:
+            DataFrame with OHLCV data
+
+        Raises:
+            RuntimeError: If no data received or contract invalid
+            TimeoutError: If request times out
+        """
+        if not symbol:
+            raise ValueError("symbol is required")
+        if duration_days is None or duration_days <= 0:
+            raise ValueError("duration_days must be positive")
+
+        # Create stock contract
+        contract = Contract()
+        contract.symbol = symbol
+        contract.secType = "STK"
+        contract.exchange = "SMART"
+        contract.currency = "USD"
+
+        # Use "D" for days instead of "S" for seconds
+        duration_str = f"{duration_days} D"
+
+        # Use TRADES data for stocks
+        result = self.get_historic_data(contract, duration_str, bar_size, timeout, "TRADES")
+
+        if result is None:
+            raise TimeoutError(f"Timeout getting historical data for {symbol}")
+        if result.empty:
+            raise RuntimeError(f"No historical data received for {symbol}")
+
+        return result
+
