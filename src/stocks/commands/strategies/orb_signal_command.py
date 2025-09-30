@@ -79,10 +79,12 @@ class ORBSignalCommand(Command):
             logger.info(f"Skipping {symbol} - already has position today")
             return False
 
-        # Get opening range for this stock - let exception propagate
-        opening_range = strategy_service.get_opening_range(symbol, now.date())
-        if not opening_range:
-            raise RuntimeError(f"No opening range found for {symbol}")
+        # Get opening range for this stock - skip symbol if not available
+        try:
+            opening_range = strategy_service.get_opening_range(symbol, now.date())
+        except RuntimeError as e:
+            logger.info(f"Skipping {symbol} - {e}")
+            return False
 
         # Get timeframe from configuration
         timeframe_minutes = self.state_manager.get_config_value(CONFIG_ORB_TIMEFRAME)
@@ -123,9 +125,18 @@ class ORBSignalCommand(Command):
 
         if breakout_signal['signal'] != 'NONE':
             # Check volume confirmation before position limits
-            if not self._check_volume_confirmation(symbol, previous_bar, timeframe_minutes, ib_client):
-                logger.info(f"{symbol} - Breakout rejected: Volume confirmation failed")
-                return False
+            volume_confirmed = self._check_volume_confirmation(symbol, previous_bar, timeframe_minutes, ib_client)
+
+            if not volume_confirmed:
+                # Volume confirmation failed - create fade signal (opposite position)
+                logger.info(f"{symbol} - Volume confirmation failed, creating fade signal")
+                fade_signal = self._create_fade_signal(breakout_signal, opening_range)
+                signal_to_use = fade_signal
+                signal_type = "FADE"
+            else:
+                # Volume confirmed - use original breakout signal
+                signal_to_use = breakout_signal
+                signal_type = "BREAKOUT"
 
             # Check position limits before generating signal
             if not self._check_position_limits():
@@ -133,7 +144,7 @@ class ORBSignalCommand(Command):
                 return False
 
             # Publish position opening signal
-            self._publish_position_signal(symbol, breakout_signal, opening_range, ib_client)
+            self._publish_position_signal(symbol, signal_to_use, opening_range, ib_client, signal_type)
             return True
 
         return False
@@ -168,19 +179,21 @@ class ORBSignalCommand(Command):
         """
         if previous_close > opening_range.range_high:
             # Breakout above range - LONG signal
+            entry_price = round(opening_range.range_high, 2)
             return {
                 'signal': 'LONG',
-                'entry_price': round(opening_range.range_high, 2),
-                'stop_loss': round(opening_range.range_mid, 2),
+                'entry_price': entry_price,
+                'stop_loss': self._calculate_stop_loss('LONG', entry_price, opening_range),
                 'take_profit': round(opening_range.range_high + (1.5 * opening_range.range_size), 2),
                 'range_size': opening_range.range_size
             }
         elif previous_close < opening_range.range_low:
             # Breakout below range - SHORT signal
+            entry_price = round(opening_range.range_low, 2)
             return {
                 'signal': 'SHORT',
-                'entry_price': round(opening_range.range_low, 2),
-                'stop_loss': round(opening_range.range_mid, 2),
+                'entry_price': entry_price,
+                'stop_loss': self._calculate_stop_loss('SHORT', entry_price, opening_range),
                 'take_profit': round(opening_range.range_low - (1.5 * opening_range.range_size), 2),
                 'range_size': opening_range.range_size
             }
@@ -188,7 +201,73 @@ class ORBSignalCommand(Command):
             # No breakout
             return {'signal': 'NONE'}
 
-    def _publish_position_signal(self, symbol, breakout_signal, opening_range, ib_client):
+    def _calculate_stop_loss(self, signal_direction, entry_price, opening_range):
+        """
+        Calculate stop loss based on direction and entry price
+
+        Args:
+            signal_direction: 'LONG' or 'SHORT'
+            entry_price: The entry price for the position
+            opening_range: Opening range data
+
+        Returns:
+            float: Stop loss price on correct side of entry
+        """
+        stop_distance = opening_range.range_size * 0.5  # 50% of range as stop distance
+
+        # INVERTED LOGIC TO FIX BUG - stops were on wrong side
+        if signal_direction == 'LONG':
+            # For LONG, stop must be BELOW entry - INVERTED: subtract from entry
+            stop_loss = round(entry_price - stop_distance, 2)
+            # Validate stop is below entry
+            if stop_loss >= entry_price:
+                raise ValueError(f"LONG stop {stop_loss} must be below entry {entry_price}")
+            return stop_loss
+        else:  # SHORT
+            # For SHORT, stop must be ABOVE entry - INVERTED: add to entry
+            stop_loss = round(entry_price + stop_distance, 2)
+            # Validate stop is above entry
+            if stop_loss <= entry_price:
+                raise ValueError(f"SHORT stop {stop_loss} must be above entry {entry_price}")
+            return stop_loss
+
+    def _create_fade_signal(self, breakout_signal, opening_range):
+        """
+        Create a fade signal (opposite of breakout signal) for low-volume breakouts
+
+        Args:
+            breakout_signal: Original breakout signal data
+            opening_range: Opening range record from database
+
+        Returns:
+            Dict with fade signal info: {'signal': 'LONG'|'SHORT', 'entry_price': float, ...}
+        """
+        if breakout_signal['signal'] == 'LONG':
+            # Fade a failed upward breakout by going SHORT
+            # Entry at range high, stop above entry, target range low
+            entry_price = round(opening_range.range_high, 2)
+            return {
+                'signal': 'SHORT',
+                'entry_price': entry_price,
+                'stop_loss': self._calculate_stop_loss('SHORT', entry_price, opening_range),
+                'take_profit': round(opening_range.range_low, 2),
+                'range_size': opening_range.range_size
+            }
+        elif breakout_signal['signal'] == 'SHORT':
+            # Fade a failed downward breakout by going LONG
+            # Entry at range low, stop below entry, target range high
+            entry_price = round(opening_range.range_low, 2)
+            return {
+                'signal': 'LONG',
+                'entry_price': entry_price,
+                'stop_loss': self._calculate_stop_loss('LONG', entry_price, opening_range),
+                'take_profit': round(opening_range.range_high, 2),
+                'range_size': opening_range.range_size
+            }
+        else:
+            raise ValueError(f"Cannot create fade signal for {breakout_signal['signal']}")
+
+    def _publish_position_signal(self, symbol, breakout_signal, opening_range, ib_client, signal_type="BREAKOUT"):
         """
         Publish EVENT_TYPE_OPEN_POSITION event for execution
 
@@ -197,6 +276,7 @@ class ORBSignalCommand(Command):
             breakout_signal: Breakout signal data
             opening_range: Opening range record
             ib_client: IBClient instance from application context
+            signal_type: Type of signal - "BREAKOUT" or "FADE"
         """
         # Calculate position size based on account risk AND margin
         # Get real account value from IB (no silent defaults)
@@ -236,18 +316,21 @@ class ORBSignalCommand(Command):
             "take_profit": breakout_signal['take_profit'],
             "range_size": breakout_signal['range_size'],
             "opening_range_id": opening_range.id,
-            "reason": f"ORB breakout {breakout_signal['signal'].lower()} of range"
+            "reason": f"ORB {signal_type.lower()} {breakout_signal['signal'].lower()} of range"
         }
 
         # Publish the event
         event = {FIELD_TYPE: EVENT_TYPE_OPEN_POSITION, FIELD_DATA: position_data}
         self.application_context.subject.notify(event)
 
-        logger.info(f"🚀 ORB Signal Published: {position_data['action']} {symbol} @ {breakout_signal['entry_price']}")
+        # Choose emoji based on signal type
+        emoji = "🔄" if signal_type == "FADE" else "🚀"
+
+        logger.info(f"{emoji} ORB {signal_type} Published: {position_data['action']} {symbol} @ {breakout_signal['entry_price']}")
 
         # Send Telegram notification
         self.state_manager.sendTelegramMessage(
-            f"🚀 ORB Signal: {position_data['action']} {symbol}\n"
+            f"{emoji} ORB {signal_type}: {position_data['action']} {symbol}\n"
             f"Entry: ${breakout_signal['entry_price']:.2f}\n"
             f"Stop: ${breakout_signal['stop_loss']:.2f}\n"
             f"Target: ${breakout_signal['take_profit']:.2f}\n"
