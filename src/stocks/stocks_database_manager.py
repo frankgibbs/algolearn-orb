@@ -351,7 +351,7 @@ class StocksDatabaseManager(IObserver):
         finally:
             session.close()
 
-    def create_position(self, order_result, opening_range_id, take_profit_price, range_size):
+    def create_position(self, order_result, opening_range_id, take_profit_price, range_size, stop_loss_price):
         """
         Create position with explicit ID from order result
 
@@ -360,6 +360,7 @@ class StocksDatabaseManager(IObserver):
             opening_range_id: ID of the opening range (required)
             take_profit_price: Take profit level to monitor (required)
             range_size: Size of opening range for trailing calculations (required)
+            stop_loss_price: Stop loss price for the position (required)
 
         Returns:
             Position: Created position object
@@ -376,13 +377,13 @@ class StocksDatabaseManager(IObserver):
             raise ValueError("take_profit_price is REQUIRED and must be positive")
         if range_size is None or range_size <= 0:
             raise ValueError("range_size is REQUIRED and must be positive")
+        if stop_loss_price is None or stop_loss_price <= 0:
+            raise ValueError("stop_loss_price is REQUIRED and must be positive")
 
-        # Calculate stop loss as midpoint of opening range
+        # Verify opening range exists
         opening_range = self.get_opening_range_by_id(opening_range_id)
         if not opening_range:
             raise ValueError(f"Opening range {opening_range_id} not found")
-
-        stop_loss_price = opening_range.range_mid
 
         session = self.get_session()
         try:
@@ -399,7 +400,8 @@ class StocksDatabaseManager(IObserver):
                 symbol=order_result['symbol'],
                 direction=direction,  # Correctly converts 'BUY' -> 'LONG', 'SELL' -> 'SHORT'
                 shares=order_result['quantity'],
-                stop_loss_price=stop_loss_price,
+                stop_loss_price=stop_loss_price,  # Original stop (never changes)
+                trailing_stop_price=stop_loss_price,  # Current stop (starts same, gets updated)
                 take_profit_price=take_profit_price,
                 range_size=range_size,
                 status='PENDING'  # Start as pending until entry fills

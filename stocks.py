@@ -190,14 +190,15 @@ def main():
     parser.add_argument("--min-volume", required=True, type=int, help="Minimum daily volume")
     parser.add_argument("--min-pre-market-change", required=True, type=float, help="Minimum pre-market change percentage")
     parser.add_argument("--stagnation-minutes", required=True, type=int, help="Minutes before position is considered stagnant")
-    parser.add_argument("--trailing-stop-ratio", type=float, default=0.5, help="Trailing stop ratio (default: 0.5)")
-    parser.add_argument("--take-profit-ratio", type=float, default=1.5, help="Take profit ratio (default: 1.5)")
-    parser.add_argument("--min-range-pct", type=float, default=0.5, help="Minimum opening range %% (default: 0.5)")
-    parser.add_argument("--max-range-pct", type=float, default=3.0, help="Maximum opening range %% (default: 3.0)")
+    parser.add_argument("--initial-stop-loss-ratio", required=True, type=float, help="Initial stop loss ratio")
+    parser.add_argument("--trailing-stop-ratio", required=True, type=float, help="Trailing stop ratio")
+    parser.add_argument("--take-profit-ratio", required=True, type=float, help="Take profit ratio")
+    parser.add_argument("--min-range-pct", required=True, type=float, help="Minimum opening range percentage")
+    parser.add_argument("--max-range-pct", required=True, type=float, help="Maximum opening range percentage")
 
     # Volume analysis parameters
-    parser.add_argument("--volume-lookback-days", type=int, default=30, help="Calendar days for volume analysis (default: 30)")
-    parser.add_argument("--volume-zscore-threshold", type=float, default=2.0, help="Z-score threshold for volume confirmation (default: 2.0)")
+    parser.add_argument("--volume-lookback-days", required=True, type=int, help="Calendar days for volume analysis")
+    parser.add_argument("--volume-zscore-threshold", required=True, type=float, help="Z-score threshold for volume confirmation")
 
     args = parser.parse_args()
 
@@ -225,6 +226,7 @@ def main():
         CONFIG_MIN_VOLUME: args.min_volume,
         CONFIG_MIN_PRE_MARKET_CHANGE: args.min_pre_market_change,
         CONFIG_STAGNATION_THRESHOLD_MINUTES: args.stagnation_minutes,
+        CONFIG_INITIAL_STOP_LOSS_RATIO: args.initial_stop_loss_ratio,
         CONFIG_TRAILING_STOP_RATIO: args.trailing_stop_ratio,
         CONFIG_TAKE_PROFIT_RATIO: args.take_profit_ratio,
         CONFIG_MIN_RANGE_PCT: args.min_range_pct,

@@ -74,7 +74,8 @@ class OpenPositionCommand(Command):
             order_result=order_result,
             opening_range_id=event_data['opening_range_id'],
             take_profit_price=event_data['take_profit'],
-            range_size=event_data['range_size']
+            range_size=event_data['range_size'],
+            stop_loss_price=event_data['stop_loss']
         )
 
         logger.info(f"Position created in database: {position}")

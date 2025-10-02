@@ -148,6 +148,7 @@ CONFIG_ORB_PERIOD_MINUTES = "orb_period_minutes"
 CONFIG_ORB_TIMEFRAME = "orb_timeframe"  # 15, 30, or 60 minutes
 CONFIG_MIN_RANGE_PCT = "min_range_pct"  # Minimum range as % of price
 CONFIG_MAX_RANGE_PCT = "max_range_pct"  # Maximum range as % of price
+CONFIG_INITIAL_STOP_LOSS_RATIO = "initial_stop_loss_ratio"  # 0.5x of range for initial stop
 CONFIG_TRAILING_STOP_RATIO = "trailing_stop_ratio"  # 0.5x of range
 CONFIG_TAKE_PROFIT_RATIO = "take_profit_ratio"  # 1.5x of range
 CONFIG_STOCK_LIST = "stock_list"  # Static list of symbols

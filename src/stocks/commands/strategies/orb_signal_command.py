@@ -91,37 +91,66 @@ class ORBSignalCommand(Command):
         if timeframe_minutes is None:
             raise ValueError("CONFIG_ORB_TIMEFRAME not configured")
 
-        # Get previous bar data to check for breakout - let exceptions propagate
+        # Calculate how many bars we need since opening range was established
+        # Opening range ends at market open + timeframe_minutes (e.g., 6:30 AM + 30 min = 7:00 AM)
+        market_open = now.replace(hour=6, minute=30, second=0, microsecond=0)
+        range_end_time = market_open.replace(minute=30 + timeframe_minutes)
+
+        # Calculate minutes since range was established
+        minutes_since_range = int((now - range_end_time).total_seconds() / 60)
+
+        # Calculate number of bars needed (add buffer for safety)
+        bars_needed = max(3, (minutes_since_range // timeframe_minutes) + 2)
+
+        # Get all bar data since opening range was established
         bars_df = ib_client.get_stock_bars(
             symbol=symbol,
-            duration_minutes=timeframe_minutes * 2,  # Get enough data
+            duration_minutes=bars_needed * timeframe_minutes,
             bar_size=f"{timeframe_minutes} mins"
         )
 
-        # Simple bar selection based on minute comparison
+        logger.info(f"{symbol} - Fetched {len(bars_df)} bars for breakout detection")
+
+        # Find the first breakout bar in history
+        first_breakout_idx, first_breakout_bar = self._find_first_breakout_bar(bars_df, opening_range)
+
+        # If no breakout has occurred yet, no signal
+        if first_breakout_idx is None:
+            logger.info(f"{symbol} - No breakout has occurred yet")
+            return False
+
+        # Determine which bar we should be checking (the "current" completed bar)
         current_minute = now.minute
         last_bar = bars_df.iloc[-1]
         last_bar_time = last_bar['date']
         last_bar_minute = last_bar_time.minute
 
         if current_minute == last_bar_minute:
-            # We're still in the same minute/bar period
-            previous_bar = bars_df.iloc[-2]
-            logger.info(f"{symbol} - Current bar still in progress (minute {current_minute}), using previous bar")
+            # We're still in the same minute/bar period, check the previous completed bar
+            current_completed_bar_idx = len(bars_df) - 2
+            logger.info(f"{symbol} - Current bar still in progress (minute {current_minute}), checking previous bar")
         else:
             # The last bar is complete
-            previous_bar = bars_df.iloc[-1]
-            logger.info(f"{symbol} - Last bar complete, using bar from minute {last_bar_minute}")
+            current_completed_bar_idx = len(bars_df) - 1
+            logger.info(f"{symbol} - Last bar complete, checking bar from minute {last_bar_minute}")
 
+        # Only proceed if the current completed bar is the first breakout
+        if current_completed_bar_idx != first_breakout_idx:
+            logger.info(f"{symbol} - First breakout was at bar {first_breakout_idx}, "
+                       f"current bar {current_completed_bar_idx} is not the first breakout")
+            return False
+
+        # This IS the first breakout bar! Get the actual bar data
+        previous_bar = bars_df.iloc[current_completed_bar_idx]
         previous_close = previous_bar['close']
 
         # Log the range and bar being checked
         bar_time = previous_bar['date']
-        logger.info(f"{symbol} - Range: ${opening_range.range_low:.2f}-${opening_range.range_high:.2f}, "
-                   f"Checking bar: {bar_time}, Close: ${previous_close:.2f}")
+        logger.info(f"{symbol} - FIRST BREAKOUT DETECTED! Range: ${opening_range.range_low:.2f}-${opening_range.range_high:.2f}, "
+                   f"Bar time: {bar_time}, Close: ${previous_close:.2f}")
 
-        # Check breakout conditions: previous candle closed above/below range
-        breakout_signal = self._check_breakout_signal(opening_range, previous_close)
+        # Check breakout conditions to get signal details (direction, prices, etc.)
+        breakout_signal = self._check_breakout_signal(opening_range, previous_close, symbol)
 
         if breakout_signal['signal'] != 'NONE':
             # Check volume confirmation before position limits
@@ -130,7 +159,11 @@ class ORBSignalCommand(Command):
             if not volume_confirmed:
                 # Volume confirmation failed - create fade signal (opposite position)
                 logger.info(f"{symbol} - Volume confirmation failed, creating fade signal")
-                fade_signal = self._create_fade_signal(breakout_signal, opening_range)
+                fade_signal = self._create_fade_signal(breakout_signal, opening_range, symbol)
+                # Check if fade signal is valid (might be NONE if no quotes available)
+                if fade_signal['signal'] == 'NONE':
+                    logger.info(f"{symbol} - Unable to create fade signal, skipping")
+                    return False
                 signal_to_use = fade_signal
                 signal_type = "FADE"
             else:
@@ -166,35 +199,65 @@ class ORBSignalCommand(Command):
 
         return current_positions < max_positions
 
-    def _check_breakout_signal(self, opening_range, previous_close):
+    def _check_breakout_signal(self, opening_range, previous_close, symbol):
         """
         Check if previous candle closed above/below opening range
+        Uses real-time bid/ask for accurate entry prices
 
         Args:
             opening_range: Opening range record from database
             previous_close: Previous candle close price
+            symbol: Stock symbol for getting real-time quotes
 
         Returns:
             Dict with signal info: {'signal': 'LONG'|'SHORT'|'NONE', 'entry_price': float, ...}
         """
+        # Get take profit ratio from config
+        take_profit_ratio = self.state_manager.get_config_value(CONFIG_TAKE_PROFIT_RATIO)
+        if take_profit_ratio is None:
+            raise ValueError("CONFIG_TAKE_PROFIT_RATIO is REQUIRED")
+
+        # Access IBClient directly from base class
+        ib_client = self.application_context.client
+
         if previous_close > opening_range.range_high:
             # Breakout above range - LONG signal
-            entry_price = round(opening_range.range_high, 2)
+            # MUST get real-time ASK price for buying
+            contract = ib_client.get_stock_contract(symbol)
+            quote = ib_client.get_stock_market_data(contract)
+
+            if not quote or not quote.get('ask') or quote['ask'] <= 0:
+                logger.warning(f"{symbol}: No ASK price available, skipping LONG signal")
+                return {'signal': 'NONE'}  # Don't trade without accurate pricing
+
+            entry_price = round(quote['ask'], 2)
+            logger.info(f"{symbol} LONG: Using real-time ASK ${entry_price}")
+
             return {
                 'signal': 'LONG',
                 'entry_price': entry_price,
                 'stop_loss': self._calculate_stop_loss('LONG', entry_price, opening_range),
-                'take_profit': round(opening_range.range_high + (1.5 * opening_range.range_size), 2),
+                'take_profit': round(entry_price + (take_profit_ratio * opening_range.range_size), 2),
                 'range_size': opening_range.range_size
             }
         elif previous_close < opening_range.range_low:
             # Breakout below range - SHORT signal
-            entry_price = round(opening_range.range_low, 2)
+            # MUST get real-time BID price for selling
+            contract = ib_client.get_stock_contract(symbol)
+            quote = ib_client.get_stock_market_data(contract)
+
+            if not quote or not quote.get('bid') or quote['bid'] <= 0:
+                logger.warning(f"{symbol}: No BID price available, skipping SHORT signal")
+                return {'signal': 'NONE'}  # Don't trade without accurate pricing
+
+            entry_price = round(quote['bid'], 2)
+            logger.info(f"{symbol} SHORT: Using real-time BID ${entry_price}")
+
             return {
                 'signal': 'SHORT',
                 'entry_price': entry_price,
                 'stop_loss': self._calculate_stop_loss('SHORT', entry_price, opening_range),
-                'take_profit': round(opening_range.range_low - (1.5 * opening_range.range_size), 2),
+                'take_profit': round(entry_price - (take_profit_ratio * opening_range.range_size), 2),
                 'range_size': opening_range.range_size
             }
         else:
@@ -213,7 +276,12 @@ class ORBSignalCommand(Command):
         Returns:
             float: Stop loss price on correct side of entry
         """
-        stop_distance = opening_range.range_size * 0.5  # 50% of range as stop distance
+        # Get initial stop loss ratio from config
+        initial_stop_ratio = self.state_manager.get_config_value(CONFIG_INITIAL_STOP_LOSS_RATIO)
+        if initial_stop_ratio is None:
+            raise ValueError("CONFIG_INITIAL_STOP_LOSS_RATIO is REQUIRED")
+
+        stop_distance = opening_range.range_size * initial_stop_ratio  # Use config ratio
 
         # INVERTED LOGIC TO FIX BUG - stops were on wrong side
         if signal_direction == 'LONG':
@@ -231,21 +299,70 @@ class ORBSignalCommand(Command):
                 raise ValueError(f"SHORT stop {stop_loss} must be above entry {entry_price}")
             return stop_loss
 
-    def _create_fade_signal(self, breakout_signal, opening_range):
+    def _find_first_breakout_bar(self, bars_df, opening_range):
+        """
+        Find the first bar that closed outside the opening range
+
+        Args:
+            bars_df: DataFrame of historical bars
+            opening_range: Opening range with range_high and range_low
+
+        Returns:
+            Tuple of (index, bar) for first breakout, or (None, None) if no breakout found
+        """
+        # Need at least 2 bars to detect a transition
+        if len(bars_df) < 2:
+            return None, None
+
+        # Start from the second bar (index 1) to compare with previous
+        for i in range(1, len(bars_df)):
+            current_bar = bars_df.iloc[i]
+            prev_bar = bars_df.iloc[i-1]
+
+            # Check if previous bar was inside the range
+            prev_inside = (opening_range.range_low <= prev_bar['close'] <= opening_range.range_high)
+
+            # Check if current bar closed outside the range
+            curr_outside = (current_bar['close'] > opening_range.range_high or
+                          current_bar['close'] < opening_range.range_low)
+
+            # If we found a transition from inside to outside, this is the first breakout
+            if prev_inside and curr_outside:
+                logger.info(f"Found first breakout at bar {i} (time: {current_bar['date']})")
+                return i, current_bar
+
+        # No breakout found in history
+        return None, None
+
+    def _create_fade_signal(self, breakout_signal, opening_range, symbol):
         """
         Create a fade signal (opposite of breakout signal) for low-volume breakouts
+        Uses real-time bid/ask for accurate entry prices
 
         Args:
             breakout_signal: Original breakout signal data
             opening_range: Opening range record from database
+            symbol: Stock symbol for getting real-time quotes
 
         Returns:
             Dict with fade signal info: {'signal': 'LONG'|'SHORT', 'entry_price': float, ...}
         """
+        # Access IBClient directly from base class
+        ib_client = self.application_context.client
+
         if breakout_signal['signal'] == 'LONG':
             # Fade a failed upward breakout by going SHORT
-            # Entry at range high, stop above entry, target range low
-            entry_price = round(opening_range.range_high, 2)
+            # MUST get real-time BID price for selling
+            contract = ib_client.get_stock_contract(symbol)
+            quote = ib_client.get_stock_market_data(contract)
+
+            if not quote or not quote.get('bid') or quote['bid'] <= 0:
+                logger.warning(f"{symbol}: No BID price for fade SHORT, skipping signal")
+                return {'signal': 'NONE'}  # Don't trade without accurate pricing
+
+            entry_price = round(quote['bid'], 2)
+            logger.info(f"{symbol} FADE SHORT: Using real-time BID ${entry_price}")
+
             return {
                 'signal': 'SHORT',
                 'entry_price': entry_price,
@@ -255,8 +372,17 @@ class ORBSignalCommand(Command):
             }
         elif breakout_signal['signal'] == 'SHORT':
             # Fade a failed downward breakout by going LONG
-            # Entry at range low, stop below entry, target range high
-            entry_price = round(opening_range.range_low, 2)
+            # MUST get real-time ASK price for buying
+            contract = ib_client.get_stock_contract(symbol)
+            quote = ib_client.get_stock_market_data(contract)
+
+            if not quote or not quote.get('ask') or quote['ask'] <= 0:
+                logger.warning(f"{symbol}: No ASK price for fade LONG, skipping signal")
+                return {'signal': 'NONE'}  # Don't trade without accurate pricing
+
+            entry_price = round(quote['ask'], 2)
+            logger.info(f"{symbol} FADE LONG: Using real-time ASK ${entry_price}")
+
             return {
                 'signal': 'LONG',
                 'entry_price': entry_price,

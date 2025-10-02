@@ -104,7 +104,7 @@ class MoveStopOrderCommand(Command):
                 return new_stop
         else:
             # Already trailing, check if we can move stop further
-            current_stop = position.trailing_stop_price or position.stop_loss_price
+            current_stop = position.trailing_stop_price  # Always populated now, no fallback needed
 
             if position.direction == 'LONG':
                 potential_stop = current_price - (position.range_size * trailing_ratio)
@@ -121,7 +121,8 @@ class MoveStopOrderCommand(Command):
 
     def _should_activate_trailing(self, position, current_price):
         """
-        Check if take profit level has been reached to activate trailing
+        Check if profit level has been reached to activate trailing
+        Uses CONFIG_TRAILING_STOP_RATIO to determine activation level
 
         Args:
             position: Position record (required)
@@ -131,17 +132,26 @@ class MoveStopOrderCommand(Command):
             Boolean indicating if trailing should be activated
 
         Raises:
-            ValueError: If any parameter is None
+            ValueError: If any parameter is None or config missing
         """
         if position is None:
             raise ValueError("position is REQUIRED")
         if current_price is None:
             raise ValueError("current_price is REQUIRED")
 
+        # Get trailing ratio to determine activation level
+        trailing_ratio = self.state_manager.get_config_value(CONFIG_TRAILING_STOP_RATIO)
+        if trailing_ratio is None:
+            raise ValueError("CONFIG_TRAILING_STOP_RATIO is REQUIRED")
+
         if position.direction == 'LONG':
-            return current_price >= position.take_profit_price
+            # Activate when profit reaches trailing_ratio × range (e.g., 0.5x)
+            activation_price = position.entry_price + (position.range_size * trailing_ratio)
+            return current_price >= activation_price
         else:  # SHORT
-            return current_price <= position.take_profit_price
+            # Activate when profit reaches trailing_ratio × range
+            activation_price = position.entry_price - (position.range_size * trailing_ratio)
+            return current_price <= activation_price
 
     def _move_stop_order(self, position, new_stop_price):
         """
