@@ -689,14 +689,17 @@ class StocksStrategyService:
         if bars is None or bars.empty:
             raise RuntimeError(f"No data available for {symbol}")
 
-        # Get opening range for today
+        # Get opening range for today - allow None if not found
         from datetime import date
-        opening_range = self.get_opening_range(symbol, date.today())
-
-        # Log the opening range details for debugging
-        if opening_range:
+        try:
+            opening_range = self.get_opening_range(symbol, date.today())
+            # Log the opening range details for debugging
             logger.info(f"Using opening range for {symbol}: date={opening_range.date}, "
                         f"high={opening_range.range_high}, low={opening_range.range_low}")
+        except RuntimeError as e:
+            # No opening range found - chart will render without support/resistance lines
+            logger.info(f"No opening range found for {symbol}, chart will render without support/resistance lines")
+            opening_range = None
 
         return bars, opening_range
 

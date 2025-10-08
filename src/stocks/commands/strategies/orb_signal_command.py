@@ -94,7 +94,7 @@ class ORBSignalCommand(Command):
         # Calculate how many bars we need since opening range was established
         # Opening range ends at market open + timeframe_minutes (e.g., 6:30 AM + 30 min = 7:00 AM)
         market_open = now.replace(hour=6, minute=30, second=0, microsecond=0)
-        range_end_time = market_open.replace(minute=30 + timeframe_minutes)
+        range_end_time = market_open + timedelta(minutes=timeframe_minutes)
 
         # Calculate minutes since range was established
         minutes_since_range = int((now - range_end_time).total_seconds() / 60)

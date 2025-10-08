@@ -8,7 +8,8 @@ services:
     volumes:
       - shared-volume:/app/data
     ports:
-      - "8005:8003"
+      - "8005:8003"  # MCP API
+      - "8006:8080"  # Dashboard
     environment:
       - HOST=ib-gateway-paper
       - PORT=4004

@@ -109,6 +109,12 @@ class StocksService(IObserver):
         mcp_api = StocksMcpApi(self.application_context)
         mcp_api.run(host="0.0.0.0", port=8003)
 
+    def __run_dashboard_api(self):
+        """Run the Dashboard API server"""
+        from src.api.stocks_dashboard_api import StocksDashboardApi
+        dashboard_api = StocksDashboardApi(self.application_context)
+        dashboard_api.run(host="0.0.0.0", port=8080)
+
     def pre_market_scan(self):
         """Trigger pre-market scan command"""
         stopped = self.state_manager.getConfigValue(CONFIG_STOPPED)
@@ -170,6 +176,11 @@ class StocksService(IObserver):
             logger.debug("Starting MCP API")
             mcp_api_thread = threading.Thread(target=self.__run_mcp_api, daemon=True)
             mcp_api_thread.start()
+
+            # Start Dashboard API thread
+            logger.debug("Starting Dashboard API")
+            dashboard_api_thread = threading.Thread(target=self.__run_dashboard_api, daemon=True)
+            dashboard_api_thread.start()
 
 
 def main():

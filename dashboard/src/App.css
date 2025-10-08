@@ -1,0 +1,58 @@
+/* Add these styles at the top of your CSS file */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+.App {
+  text-align: center;
+}
+
+.main-layout {
+  display: grid;
+  grid-template-columns: 1fr 4fr; /* Section 3 gets more space */
+  grid-template-rows: auto 1fr; /* Changed this line */
+  gap: 7px;
+  height: 100vh; /* Added this line */
+  overflow: hidden; /* Added this line */
+}
+
+.section-header {
+  grid-column: 1 / span 3; /* Section 1 spans all columns */
+  text-align: center;
+}
+
+.section-left {
+  grid-column: 1 / span 1;
+  overflow-y: auto; /* Added this line */
+}
+
+
+.section-main {
+  grid-column: 2 / span 1; /* Section 3 will automatically take up more space due to 2fr */
+  overflow-y: auto; /* Added this line */
+}
+/* Dark mode applied globally */
+body, .main-layout {
+  color: #0e0e0e;
+}
+
+.section-header,
+.section-left,
+.section-main {
+  background-color: #fbfdfe;
+}
+
+/* Mobile styles */
+@media (max-width: 768px) {
+  .main-layout {
+    display: flex; /* Change to flexbox */
+    flex-direction: column; /* Stack sections vertically */
+    height: auto; /* Allow height to adjust based on content */
+  }
+
+  .section-header, .section-left, .section-main {
+    width: 100%; /* Full width for each section */
+  }
+}

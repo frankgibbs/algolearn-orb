@@ -29,6 +29,20 @@ RUN pip install -r requirements.txt
 # Copy application code
 COPY . .
 
+# Install Node.js for dashboard build
+RUN apt-get update && apt-get install -y \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build dashboard
+WORKDIR /app/dashboard
+RUN npm install && npm run build
+
+# Return to app directory
+WORKDIR /app
+
 # Create data directory
 RUN mkdir -p /app/data
 
