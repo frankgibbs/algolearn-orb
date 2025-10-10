@@ -29,6 +29,7 @@ from pydantic import AnyUrl
 from src.core.constants import *
 from src.stocks.services.stocks_scanner_service import StocksScannerService
 from src.stocks.services.stocks_strategy_service import StocksStrategyService
+from src.stocks.services.volatility_service import VolatilityService
 from src import logger
 
 class StocksMcpApi:
@@ -121,7 +122,7 @@ class StocksMcpApi:
                 ),
                 Tool(
                     name="get_stock_bars",
-                    description="Get historical OHLC bars for a stock symbol",
+                    description="Get historical OHLC bars for a stock symbol using IB native format",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -129,13 +130,15 @@ class StocksMcpApi:
                                 "type": "string",
                                 "description": "Stock symbol (e.g., AAPL)"
                             },
-                            "duration_minutes": {
-                                "type": "integer",
-                                "description": "Duration in minutes (default: 390 for full day)"
+                            "duration": {
+                                "type": "string",
+                                "description": "IB duration format: '252 D' (days), '390 S' (seconds), '1 M' (months)",
+                                "default": "390 S"
                             },
                             "bar_size": {
                                 "type": "string",
-                                "description": "Bar size (e.g., '1 min', '5 mins', '30 mins')"
+                                "description": "IB bar size: '1 day', '30 mins', '1 hour', etc.",
+                                "default": "30 mins"
                             }
                         },
                         "required": ["symbol"]
@@ -199,6 +202,81 @@ class StocksMcpApi:
                         "required": []
                     }
                 ),
+                Tool(
+                    name="get_current_implied_volatility",
+                    description="Get current at-the-money (ATM) implied volatility for options strategy analysis",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Stock symbol (e.g., AAPL)"
+                            }
+                        },
+                        "required": ["symbol"]
+                    }
+                ),
+                Tool(
+                    name="get_volatility_term_structure",
+                    description="Get implied volatility term structure across multiple expirations",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Stock symbol (e.g., AAPL)"
+                            },
+                            "target_days": {
+                                "type": "array",
+                                "items": {"type": "integer"},
+                                "description": "Target days to expiration (e.g., [30, 60, 90])",
+                                "default": [30, 60, 90]
+                            }
+                        },
+                        "required": ["symbol"]
+                    }
+                ),
+                Tool(
+                    name="analyze_volatility",
+                    description="Perform complete real-time volatility analysis including IV, HV, IV/HV ratio, and term structure",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Stock symbol (e.g., AAPL)"
+                            }
+                        },
+                        "required": ["symbol"]
+                    }
+                ),
+                Tool(
+                    name="get_option_quote",
+                    description="Get real-time option quote with bid/ask prices and Greeks",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Stock symbol (e.g., AAPL)"
+                            },
+                            "expiry": {
+                                "type": "string",
+                                "description": "Expiration date in YYYYMMDD format (e.g., 20251107)"
+                            },
+                            "strike": {
+                                "type": "number",
+                                "description": "Strike price (e.g., 240)"
+                            },
+                            "right": {
+                                "type": "string",
+                                "description": "Option type: 'C' for call, 'P' for put",
+                                "enum": ["C", "P"]
+                            }
+                        },
+                        "required": ["symbol", "expiry", "strike", "right"]
+                    }
+                ),
             ]
 
         @self.server.call_tool()
@@ -218,6 +296,14 @@ class StocksMcpApi:
                     return await self._get_opening_ranges(arguments or {})
                 elif name == "get_all_positions":
                     return await self._get_all_positions(arguments or {})
+                elif name == "get_current_implied_volatility":
+                    return await self._get_current_implied_volatility(arguments or {})
+                elif name == "get_volatility_term_structure":
+                    return await self._get_volatility_term_structure(arguments or {})
+                elif name == "analyze_volatility":
+                    return await self._analyze_volatility(arguments or {})
+                elif name == "get_option_quote":
+                    return await self._get_option_quote(arguments or {})
                 else:
                     raise ValueError(f"Unknown tool: {name}")
             except Exception as e:
@@ -402,19 +488,20 @@ class StocksMcpApi:
             return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
 
     async def _get_stock_bars(self, args: dict) -> list[TextContent]:
-        """Get historical OHLC bars for analysis"""
+        """Get historical OHLC bars for analysis using IB native format"""
         symbol = args.get("symbol")
-        duration_minutes = args.get("duration_minutes", 390)  # Default full day
-        bar_size = args.get("bar_size", "30 mins")  # Default 30 min bars
+        duration = args.get("duration", "390 S")  # Default: 390 seconds (6.5 hours)
+        bar_size = args.get("bar_size", "30 mins")  # Default: 30 min bars
 
         if not symbol:
             return [TextContent(type="text", text="Error: symbol is required")]
 
         try:
-            # Use the client to get bars
-            bars = self.application_context.client.get_stock_bars(
+            # Use volatility service for consistent handling
+            volatility_service = VolatilityService(self.application_context)
+            bars = volatility_service.get_historical_prices(
                 symbol=symbol,
-                duration_minutes=duration_minutes,
+                duration=duration,
                 bar_size=bar_size
             )
 
@@ -424,8 +511,8 @@ class StocksMcpApi:
             # Format bars for output
             result = {
                 "symbol": symbol,
+                "duration": duration,
                 "bar_size": bar_size,
-                "duration_minutes": duration_minutes,
                 "bar_count": len(bars),
                 "bars": []
             }
@@ -649,6 +736,139 @@ class StocksMcpApi:
             logger.error(f"Error in _get_all_positions: {e}")
             return [TextContent(type="text", text=f"Error getting all positions: {str(e)}", meta={})]
 
+    async def _get_current_implied_volatility(self, args: dict) -> list[TextContent]:
+        """Get current at-the-money implied volatility"""
+        symbol = args.get("symbol")
+
+        if not symbol:
+            return [TextContent(type="text", text="Error: symbol is required", meta={})]
+
+        try:
+            # Initialize volatility service
+            volatility_service = VolatilityService(self.application_context)
+
+            # Get ATM IV
+            iv_data = volatility_service.get_current_atm_iv(symbol)
+
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "symbol": symbol,
+                "data": iv_data
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_current_implied_volatility: {e}")
+            return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
+
+    async def _get_volatility_term_structure(self, args: dict) -> list[TextContent]:
+        """Get volatility term structure across multiple expirations"""
+        symbol = args.get("symbol")
+        target_days = args.get("target_days", [30, 60, 90])
+
+        if not symbol:
+            return [TextContent(type="text", text="Error: symbol is required", meta={})]
+
+        try:
+            # Initialize volatility service
+            volatility_service = VolatilityService(self.application_context)
+
+            # Get term structure
+            term_structure_data = volatility_service.get_volatility_term_structure(
+                symbol=symbol,
+                target_days=target_days
+            )
+
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "data": term_structure_data
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_volatility_term_structure: {e}")
+            return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
+
+    async def _analyze_volatility(self, args: dict) -> list[TextContent]:
+        """Perform complete volatility analysis"""
+        symbol = args.get("symbol")
+
+        if not symbol:
+            return [TextContent(type="text", text="Error: symbol is required", meta={})]
+
+        try:
+            # Initialize volatility service
+            volatility_service = VolatilityService(self.application_context)
+
+            # Perform complete analysis
+            analysis = volatility_service.analyze_complete_volatility(symbol)
+
+            return [TextContent(type="text", text=json.dumps(analysis, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _analyze_volatility: {e}")
+            return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
+
+    async def _get_option_quote(self, args: dict) -> list[TextContent]:
+        """Get real-time option quote with bid/ask and Greeks"""
+        symbol = args.get("symbol")
+        expiry = args.get("expiry")
+        strike = args.get("strike")
+        right = args.get("right")
+
+        # Validate required parameters
+        if not symbol:
+            return [TextContent(type="text", text="Error: symbol is required", meta={})]
+        if not expiry:
+            return [TextContent(type="text", text="Error: expiry is required", meta={})]
+        if strike is None:
+            return [TextContent(type="text", text="Error: strike is required", meta={})]
+        if not right:
+            return [TextContent(type="text", text="Error: right is required (C or P)", meta={})]
+        if right not in ["C", "P"]:
+            return [TextContent(type="text", text="Error: right must be 'C' (call) or 'P' (put)", meta={})]
+
+        try:
+            # Get option Greeks and pricing from IB
+            greeks_data = self.application_context.client.get_option_greeks(
+                symbol=symbol,
+                expiry=expiry,
+                strike=strike,
+                right=right
+            )
+
+            if not greeks_data:
+                return [TextContent(type="text", text=f"No data available for {symbol} {strike}{right} exp:{expiry}", meta={})]
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "symbol": symbol,
+                "strike": strike,
+                "expiry": expiry,
+                "right": right,
+                "bid": greeks_data.get('bid'),
+                "ask": greeks_data.get('ask'),
+                "last": greeks_data.get('last'),
+                "mid": (greeks_data.get('bid', 0) + greeks_data.get('ask', 0)) / 2 if greeks_data.get('bid') and greeks_data.get('ask') else None,
+                "greeks": {
+                    "iv": greeks_data.get('iv'),
+                    "delta": greeks_data.get('delta'),
+                    "gamma": greeks_data.get('gamma'),
+                    "theta": greeks_data.get('theta'),
+                    "vega": greeks_data.get('vega')
+                },
+                "underlying_price": greeks_data.get('underlying_price')
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_option_quote: {e}")
+            return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
+
     def run(self, host="0.0.0.0", port=8003):
         """Run the MCP server with both HTTP endpoints and MCP protocol support"""
         import logging
@@ -680,8 +900,13 @@ class StocksMcpApi:
                     "run_pre_market_scan",
                     "get_current_candidates",
                     "get_scanner_types",
+                    "get_stock_bars",
                     "get_opening_ranges",
-                    "get_all_positions"
+                    "get_all_positions",
+                    "get_current_implied_volatility",
+                    "get_volatility_term_structure",
+                    "analyze_volatility",
+                    "get_option_quote"
                 ]
             }
 
@@ -821,6 +1046,100 @@ class StocksMcpApi:
                                         }
                                     }
                                 },
+                                {
+                                    "name": "get_current_implied_volatility",
+                                    "description": "Get current at-the-money implied volatility",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {
+                                                "type": "string",
+                                                "description": "Stock symbol (e.g., AAPL)"
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "get_volatility_term_structure",
+                                    "description": "Get volatility term structure",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {
+                                                "type": "string",
+                                                "description": "Stock symbol"
+                                            },
+                                            "target_days": {
+                                                "type": "array",
+                                                "items": {"type": "integer"},
+                                                "description": "Target days to expiration",
+                                                "default": [30, 60, 90]
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "analyze_volatility",
+                                    "description": "Complete volatility analysis",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {
+                                                "type": "string",
+                                                "description": "Stock symbol"
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "get_option_quote",
+                                    "description": "Get real-time option quote with bid/ask and Greeks",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {
+                                                "type": "string",
+                                                "description": "Stock symbol (e.g., AAPL)"
+                                            },
+                                            "expiry": {
+                                                "type": "string",
+                                                "description": "Expiration date in YYYYMMDD format (e.g., 20251107)"
+                                            },
+                                            "strike": {
+                                                "type": "number",
+                                                "description": "Strike price (e.g., 240)"
+                                            },
+                                            "right": {
+                                                "type": "string",
+                                                "description": "Option type: C for call, P for put"
+                                            }
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "get_stock_bars",
+                                    "description": "Get historical OHLC bars for stock price analysis",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {
+                                                "type": "string",
+                                                "description": "Stock symbol (e.g., AAPL)"
+                                            },
+                                            "duration": {
+                                                "type": "string",
+                                                "description": "IB duration string (e.g., '90 D', '252 D', '1 Y')",
+                                                "default": "90 D"
+                                            },
+                                            "bar_size": {
+                                                "type": "string",
+                                                "description": "IB bar size (e.g., '1 day', '1 hour', '30 mins')",
+                                                "default": "1 day"
+                                            }
+                                        },
+                                        "required": ["symbol"]
+                                    }
+                                },
                             ]
                         }
                     }
@@ -843,6 +1162,14 @@ class StocksMcpApi:
                         result = await self._get_opening_ranges(arguments)
                     elif tool_name == "get_all_positions":
                         result = await self._get_all_positions(arguments)
+                    elif tool_name == "get_current_implied_volatility":
+                        result = await self._get_current_implied_volatility(arguments)
+                    elif tool_name == "get_volatility_term_structure":
+                        result = await self._get_volatility_term_structure(arguments)
+                    elif tool_name == "analyze_volatility":
+                        result = await self._analyze_volatility(arguments)
+                    elif tool_name == "get_option_quote":
+                        result = await self._get_option_quote(arguments)
                     else:
                         return {
                             "jsonrpc": "2.0",

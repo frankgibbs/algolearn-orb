@@ -78,6 +78,10 @@ class IBClient(EWrapper, EClient):
         self.fundamental_data = {}
         self.fundamental_received_event = threading.Event()
 
+        # Add for multiple contract details collection (for strike validation)
+        self.contract_details_list = {}
+        self.contract_details_list_received_event = threading.Event()
+
         logger.info(config)
 
     def check_connection(self):
@@ -237,8 +241,22 @@ class IBClient(EWrapper, EClient):
         super().contractDetails(reqId, contractDetails)
 
         contract = contractDetails.contract
-        self.contract_details[reqId] = contractDetails.contract
-        self.contract_details_received_event.set()
+
+        # Check if this is a multi-contract request (for strike collection)
+        if reqId in self.contract_details_list:
+            self.contract_details_list[reqId].append(contractDetails)
+        else:
+            # Single contract request (existing behavior)
+            self.contract_details[reqId] = contractDetails.contract
+            self.contract_details_received_event.set()
+
+    def contractDetailsEnd(self, reqId: int):
+        """Called when all contract details have been received"""
+        super().contractDetailsEnd(reqId)
+
+        # Signal completion for multi-contract requests
+        if reqId in self.contract_details_list:
+            self.contract_details_list_received_event.set()
                  
 
     def securityDefinitionOptionParameter(self, reqId: int, exchange: str,
@@ -850,6 +868,65 @@ class IBClient(EWrapper, EClient):
         super().securityDefinitionOptionParameterEnd(reqId)
         logger.debug(f"Options chain data complete for request {reqId}")
         self.option_chains_received_event.set()
+
+    def get_strikes_for_expiration(self, symbol, expiry, timeout=10):
+        """
+        Get available strikes for a specific expiration date by querying IB contract details
+
+        Args:
+            symbol: Stock symbol (required)
+            expiry: Expiration in YYYYMMDD format (required)
+            timeout: Timeout in seconds (default: 10)
+
+        Returns:
+            List of available strike prices (floats) sorted ascending, or None on error
+
+        Raises:
+            ValueError: If symbol or expiry is None
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+        if not expiry:
+            raise ValueError("expiry is REQUIRED")
+
+        request_id = self.get_next_request_id()
+
+        # Create option contract with strike=0 to match all strikes for this expiration
+        contract = Contract()
+        contract.symbol = symbol
+        contract.secType = "OPT"
+        contract.exchange = "SMART"
+        contract.currency = "USD"
+        contract.lastTradeDateOrContractMonth = expiry
+        contract.strike = 0  # Wildcard to get all strikes
+        contract.multiplier = "100"
+        # Note: not specifying right (C/P) to get both, we'll dedupe strikes
+
+        # Initialize collection list
+        self.contract_details_list_received_event.clear()
+        self.contract_details_list[request_id] = []
+
+        logger.info(f"Requesting available strikes for {symbol} expiry {expiry} (reqId: {request_id})")
+
+        # Request contract details - IB will return multiple contracts
+        self.reqContractDetails(request_id, contract)
+
+        if self.contract_details_list_received_event.wait(timeout=timeout):
+            contract_list = self.contract_details_list.get(request_id, [])
+            self.contract_details_list.pop(request_id, None)
+
+            if not contract_list:
+                logger.warning(f"No contracts found for {symbol} expiry {expiry}")
+                return None
+
+            # Extract unique strikes from all contracts
+            strikes = sorted(set(c.contract.strike for c in contract_list))
+            logger.info(f"Found {len(strikes)} available strikes for {symbol} {expiry}: {strikes[:10]}...")
+            return strikes
+        else:
+            logger.error(f"Timeout waiting for strikes for {symbol} expiry {expiry}")
+            self.contract_details_list.pop(request_id, None)
+            return None
 
     def get_option_contract(self, symbol, expiry, strike, right, exchange="SMART"):
         """Create an option contract"""

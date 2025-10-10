@@ -207,3 +207,195 @@ curl http://192.168.86.30:8005/
 - The server runs inside the orb-stocks container
 - Use port 8005 when calling from outside the Docker network
 - Responses are in JSON format with either "result" or "error" fields
+
+## Volatility Analysis & Options Strategy Selection
+
+### Framework (Based on Natenberg's "Option Volatility and Pricing")
+
+This system implements a complete volatility-based options strategy selection framework using real-time Interactive Brokers data.
+
+### Key Concepts
+
+1. **Implied Volatility (IV)**: Market's expectation of future volatility, derived from ATM option prices
+2. **Historical Volatility (HV)**: Realized volatility calculated from price returns: `std(ln(P[t]/P[t-1])) * sqrt(252)`
+3. **IV/HV Ratio**: Primary metric for determining if options are overpriced or underpriced
+   - **< 0.85**: Options underpriced → BUY volatility (long options, spreads)
+   - **> 1.25**: Options overpriced → SELL volatility (short premium strategies)
+   - **0.85-1.25**: NEUTRAL → Use spread strategies
+4. **Term Structure**: IV across multiple expirations
+   - **Upward slope**: Back month IV > front month (normal contango)
+   - **Inverted**: Front month IV > back month (near-term uncertainty/event)
+
+### Available Volatility MCP Tools
+
+#### 1. Complete Volatility Analysis
+```bash
+curl -X POST http://192.168.86.30:8005/mcp -H "Content-Type: application/json" -d '{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "analyze_volatility",
+    "arguments": {
+      "symbol": "AAPL"
+    }
+  }
+}'
+```
+
+**Returns:**
+- Current ATM IV (call/put/average)
+- Historical volatility (10, 20, 30, 60 day)
+- IV/HV ratio
+- Volatility term structure (30, 60, 90 days)
+- Trading signal (BUY_VOLATILITY, SELL_VOLATILITY, NEUTRAL)
+
+#### 2. Get Real Option Quotes
+```bash
+curl -X POST http://192.168.86.30:8005/mcp -H "Content-Type: application/json" -d '{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "get_option_quote",
+    "arguments": {
+      "symbol": "AAPL",
+      "expiry": "20251107",
+      "strike": 250,
+      "right": "P"
+    }
+  }
+}'
+```
+
+**Returns:**
+- Bid/ask/mid prices
+- Greeks (delta, gamma, theta, vega, IV)
+- Underlying price
+- Last trade price
+
+#### 3. Get Stock Bars (Historical Prices)
+```bash
+curl -X POST http://192.168.86.30:8005/mcp -H "Content-Type: application/json" -d '{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "tools/call",
+  "params": {
+    "name": "get_stock_bars",
+    "arguments": {
+      "symbol": "AAPL",
+      "duration": "252 D",
+      "bar_size": "1 day"
+    }
+  }
+}'
+```
+
+### Standard Analysis Workflow
+
+When asked to analyze a symbol for options strategies:
+
+#### Step 1: Run Volatility Analysis
+```bash
+analyze_volatility(symbol="XYZ")
+```
+
+Review the output to determine:
+- Current IV level (absolute volatility)
+- IV/HV ratio (relative valuation)
+- Term structure slope (calendar opportunities)
+- Trading signal
+
+#### Step 2: Select Appropriate Strategies Based on Signal
+
+**SELL_VOLATILITY (IV/HV > 1.25):**
+- Iron Condor (defined risk, premium collection)
+- Short Strangle (higher premium, undefined risk)
+- Iron Butterfly (max premium, tight profit zone)
+
+**BUY_VOLATILITY (IV/HV < 0.85):**
+- Long Straddle/Strangle
+- Calendar spreads (if term structure supports)
+- Vertical spreads (directional bias)
+
+**NEUTRAL (0.85 < IV/HV < 1.25):**
+- Iron Condor (balanced approach)
+- Vertical spreads with directional view
+
+#### Step 3: Get Real Market Prices
+Use `get_option_quote` to fetch actual bid/ask for all legs of the strategy.
+
+**IMPORTANT:** Always use real market prices - never estimate or guess option prices.
+
+#### Step 4: Calculate Strategy Metrics
+
+For each strategy, calculate:
+- **Premium collected**: Net credit received
+- **Max risk**: Maximum possible loss
+- **ROI**: (Premium / Max Risk) × 100
+- **Breakeven points**: Strike ± premium for spreads
+- **Profit zone**: Distance between breakevens as % of underlying price
+- **Days to expiration**: Time value decay
+
+#### Step 5: Compare Strategies & Recommend
+
+Provide analysis comparing:
+- Risk-defined vs undefined risk
+- ROI vs probability of profit
+- Capital efficiency
+- Management complexity
+
+### Strategy Calculation Examples
+
+#### Iron Condor (XYZ @ $100, target 5-wide spreads)
+```
+Bull Put Spread:
+- Sell 95P @ $1.50 (bid)
+- Buy 90P @ $0.75 (ask)
+- Credit: $0.75
+
+Bear Call Spread:
+- Sell 105C @ $1.40 (bid)
+- Buy 110C @ $0.70 (ask)
+- Credit: $0.70
+
+Total credit: $1.45 ($145)
+Max risk: $355 ($500 - $145)
+ROI: 40.8%
+Breakevens: $93.55 / $106.45
+Profit zone: $12.90 (12.9%)
+```
+
+#### Iron Butterfly (XYZ @ $100, 10-wide wings)
+```
+- Sell 100P @ $3.50 (bid)
+- Sell 100C @ $3.60 (bid)
+- Buy 90P @ $1.20 (ask)
+- Buy 110C @ $1.30 (ask)
+
+Total credit: $4.60 ($460)
+Max risk: $540 ($1,000 - $460)
+ROI: 85.2%
+Breakevens: $95.40 / $104.60
+Profit zone: $9.20 (9.2%)
+```
+
+### Key Guidelines
+
+1. **Always use real bid/ask prices** - sell at bid, buy at ask
+2. **Calculate actual ROI** - don't estimate
+3. **Consider probability of profit** based on profit zone width
+4. **Account for liquidity** - tight bid/ask spreads are crucial
+5. **Factor in commission costs** for multi-leg strategies
+6. **Use volatility analysis to guide strategy selection** - don't trade against the regime
+
+### Service Layer
+
+The `VolatilityService` (`src/stocks/services/volatility_service.py`) provides:
+- `get_historical_prices()` - OHLC bars with IB native format
+- `calculate_historical_volatility()` - Natenberg formula for HV
+- `get_current_atm_iv()` - Real-time ATM implied volatility
+- `get_volatility_term_structure()` - IV across expirations
+- `analyze_complete_volatility()` - Complete analysis with signal
+
+All methods use real-time IB data (no caching/storage currently).

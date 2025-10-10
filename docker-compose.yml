@@ -31,7 +31,7 @@ services:
       - MIN_RANGE_PCT=0.5
       - MAX_RANGE_PCT=3.0
       - VOLUME_LOOKBACK_DAYS=20
-      - VOLUME_ZSCORE_THRESHOLD=2.0
+      - VOLUME_ZSCORE_THRESHOLD=1.0
     networks:
       - algolearn_network
 
