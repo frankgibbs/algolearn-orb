@@ -277,6 +277,114 @@ class StocksMcpApi:
                         "required": ["symbol", "expiry", "strike", "right"]
                     }
                 ),
+                Tool(
+                    name="place_options_spread",
+                    description="Place a multi-leg option spread order (vertical spreads, iron condors, etc.)",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Stock symbol (e.g., AAPL)"
+                            },
+                            "strategy_type": {
+                                "type": "string",
+                                "description": "Strategy name (e.g., BULL_PUT_SPREAD, BEAR_CALL_SPREAD, IRON_CONDOR)",
+                                "enum": ["BULL_PUT_SPREAD", "BEAR_CALL_SPREAD", "IRON_CONDOR", "IRON_BUTTERFLY"]
+                            },
+                            "legs": {
+                                "type": "array",
+                                "description": "List of leg dictionaries with keys: action (BUY/SELL), strike, right (C/P), expiry (YYYYMMDD), quantity",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "action": {"type": "string", "enum": ["BUY", "SELL"]},
+                                        "strike": {"type": "number"},
+                                        "right": {"type": "string", "enum": ["C", "P"]},
+                                        "expiry": {"type": "string"},
+                                        "quantity": {"type": "integer", "default": 1}
+                                    },
+                                    "required": ["action", "strike", "right", "expiry"]
+                                }
+                            },
+                            "limit_price": {
+                                "type": "number",
+                                "description": "Net credit (positive) or debit (negative) for the spread"
+                            },
+                            "expiration_date": {
+                                "type": "string",
+                                "description": "Expiration datetime in ISO format (YYYY-MM-DDTHH:MM:SS)"
+                            },
+                            "entry_iv": {
+                                "type": "number",
+                                "description": "Current implied volatility at entry (decimal, e.g., 0.30 for 30%)"
+                            },
+                            "time_in_force": {
+                                "type": "string",
+                                "description": "Order time in force",
+                                "enum": ["DAY", "GTC"],
+                                "default": "DAY"
+                            }
+                        },
+                        "required": ["symbol", "strategy_type", "legs", "limit_price", "expiration_date", "entry_iv"]
+                    }
+                ),
+                Tool(
+                    name="cancel_option_order",
+                    description="Cancel a pending option order",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "order_id": {
+                                "type": "integer",
+                                "description": "Order ID to cancel"
+                            }
+                        },
+                        "required": ["order_id"]
+                    }
+                ),
+                Tool(
+                    name="list_working_orders",
+                    description="List all pending/working option orders",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Optional symbol filter (e.g., AAPL)"
+                            }
+                        },
+                        "required": []
+                    }
+                ),
+                Tool(
+                    name="list_option_positions",
+                    description="List all open option positions with current P&L",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Optional symbol filter (e.g., AAPL)"
+                            }
+                        },
+                        "required": []
+                    }
+                ),
+                Tool(
+                    name="analyze_option_position",
+                    description="Analyze an option position and get exit/management recommendation",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "order_id": {
+                                "type": "integer",
+                                "description": "Position order ID to analyze"
+                            }
+                        },
+                        "required": ["order_id"]
+                    }
+                ),
             ]
 
         @self.server.call_tool()
@@ -304,6 +412,16 @@ class StocksMcpApi:
                     return await self._analyze_volatility(arguments or {})
                 elif name == "get_option_quote":
                     return await self._get_option_quote(arguments or {})
+                elif name == "place_options_spread":
+                    return await self._place_options_spread(arguments or {})
+                elif name == "cancel_option_order":
+                    return await self._cancel_option_order(arguments or {})
+                elif name == "list_working_orders":
+                    return await self._list_working_orders(arguments or {})
+                elif name == "list_option_positions":
+                    return await self._list_option_positions(arguments or {})
+                elif name == "analyze_option_position":
+                    return await self._analyze_option_position(arguments or {})
                 else:
                     raise ValueError(f"Unknown tool: {name}")
             except Exception as e:
@@ -869,6 +987,205 @@ class StocksMcpApi:
             logger.error(f"Error in _get_option_quote: {e}")
             return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
 
+    async def _place_options_spread(self, args: dict) -> list[TextContent]:
+        """Place a multi-leg option spread order"""
+        from src.options.services.option_order_service import OptionOrderService
+
+        symbol = args.get("symbol")
+        strategy_type = args.get("strategy_type")
+        legs = args.get("legs")
+        limit_price = args.get("limit_price")
+        expiration_date_str = args.get("expiration_date")
+        entry_iv = args.get("entry_iv")
+        time_in_force = args.get("time_in_force", "DAY")
+
+        # Validate required parameters
+        if not symbol:
+            return [TextContent(type="text", text="Error: symbol is required", meta={})]
+        if not strategy_type:
+            return [TextContent(type="text", text="Error: strategy_type is required", meta={})]
+        if not legs or len(legs) < 2:
+            return [TextContent(type="text", text="Error: legs is required and must have at least 2 legs", meta={})]
+        if limit_price is None:
+            return [TextContent(type="text", text="Error: limit_price is required", meta={})]
+        if not expiration_date_str:
+            return [TextContent(type="text", text="Error: expiration_date is required", meta={})]
+        if entry_iv is None or entry_iv <= 0:
+            return [TextContent(type="text", text="Error: entry_iv is required and must be > 0", meta={})]
+
+        try:
+            # Parse expiration date
+            expiration_date = datetime.fromisoformat(expiration_date_str)
+
+            # Initialize service
+            order_service = OptionOrderService(self.application_context)
+
+            # Place the spread order
+            order_result = order_service.place_spread(
+                symbol=symbol,
+                strategy_type=strategy_type,
+                legs=legs,
+                limit_price=limit_price,
+                expiration_date=expiration_date,
+                entry_iv=entry_iv,
+                time_in_force=time_in_force
+            )
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "order_id": order_result['order_id'],
+                "symbol": symbol,
+                "strategy_type": strategy_type,
+                "status": order_result['status'],
+                "message": order_result['message'],
+                "max_risk": order_result['max_risk'],
+                "max_profit": order_result['max_profit'],
+                "roi_target": order_result['roi_target'],
+                "legs": legs,
+                "limit_price": limit_price,
+                "time_in_force": time_in_force
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _place_options_spread: {e}")
+            return [TextContent(type="text", text=f"Error placing option spread: {str(e)}", meta={})]
+
+    async def _cancel_option_order(self, args: dict) -> list[TextContent]:
+        """Cancel a pending option order"""
+        from src.options.services.option_order_service import OptionOrderService
+
+        order_id = args.get("order_id")
+
+        if not order_id:
+            return [TextContent(type="text", text="Error: order_id is required", meta={})]
+
+        try:
+            # Initialize service
+            order_service = OptionOrderService(self.application_context)
+
+            # Cancel the order
+            cancel_result = order_service.cancel_order(order_id)
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "order_id": cancel_result['order_id'],
+                "status": cancel_result['status'],
+                "message": cancel_result['message']
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _cancel_option_order: {e}")
+            return [TextContent(type="text", text=f"Error canceling option order: {str(e)}", meta={})]
+
+    async def _list_working_orders(self, args: dict) -> list[TextContent]:
+        """List all pending/working option orders"""
+        from src.options.services.option_order_service import OptionOrderService
+
+        symbol = args.get("symbol")
+
+        try:
+            # Initialize service
+            order_service = OptionOrderService(self.application_context)
+
+            # Get working orders
+            working_orders = order_service.list_working_orders(symbol=symbol)
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "total_working_orders": len(working_orders),
+                "working_orders": working_orders,
+                "summary": {
+                    "unique_symbols": len(set(order['symbol'] for order in working_orders)),
+                    "total_credit_at_risk": sum(order.get('max_risk', 0) for order in working_orders)
+                }
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _list_working_orders: {e}")
+            return [TextContent(type="text", text=f"Error listing working orders: {str(e)}", meta={})]
+
+    async def _list_option_positions(self, args: dict) -> list[TextContent]:
+        """List all open option positions with current P&L"""
+        from src.options.services.option_position_service import OptionPositionService
+
+        symbol = args.get("symbol")
+
+        try:
+            # Initialize service
+            position_service = OptionPositionService(self.application_context)
+
+            # Get open positions with updated P&L
+            positions = position_service.list_open_positions(symbol=symbol)
+
+            # Calculate summary stats
+            total_unrealized_pnl = sum(pos.get('unrealized_pnl', 0) for pos in positions)
+            total_max_risk = sum(pos.get('max_risk', 0) for pos in positions)
+            avg_dte = sum(pos.get('dte', 0) for pos in positions) / len(positions) if positions else 0
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "total_open_positions": len(positions),
+                "positions": positions,
+                "summary": {
+                    "total_unrealized_pnl": total_unrealized_pnl,
+                    "total_max_risk": total_max_risk,
+                    "average_dte": round(avg_dte, 1),
+                    "positions_at_profit_target": len([p for p in positions if p.get('profit_target_hit')]),
+                    "positions_needing_management": len([p for p in positions if p.get('needs_management')]),
+                    "unique_symbols": len(set(p['symbol'] for p in positions))
+                }
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _list_option_positions: {e}")
+            return [TextContent(type="text", text=f"Error listing option positions: {str(e)}", meta={})]
+
+    async def _analyze_option_position(self, args: dict) -> list[TextContent]:
+        """Analyze an option position and provide exit/management recommendation"""
+        from src.options.services.option_analyzer_service import OptionAnalyzerService
+
+        order_id = args.get("order_id")
+
+        if not order_id:
+            return [TextContent(type="text", text="Error: order_id is required", meta={})]
+
+        try:
+            # Initialize service
+            analyzer_service = OptionAnalyzerService(self.application_context)
+
+            # Analyze the position
+            analysis = analyzer_service.analyze_position(order_id)
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "analysis": analysis,
+                "action_summary": {
+                    "recommendation": analysis['recommendation'],
+                    "reason": analysis['reason'],
+                    "suggested_action": analysis['suggested_action']
+                },
+                "position_metrics": analysis['metrics']
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _analyze_option_position: {e}")
+            return [TextContent(type="text", text=f"Error analyzing option position: {str(e)}", meta={})]
+
     def run(self, host="0.0.0.0", port=8003):
         """Run the MCP server with both HTTP endpoints and MCP protocol support"""
         import logging
@@ -906,7 +1223,12 @@ class StocksMcpApi:
                     "get_current_implied_volatility",
                     "get_volatility_term_structure",
                     "analyze_volatility",
-                    "get_option_quote"
+                    "get_option_quote",
+                    "place_options_spread",
+                    "cancel_option_order",
+                    "list_working_orders",
+                    "list_option_positions",
+                    "analyze_option_position"
                 ]
             }
 
@@ -1140,6 +1462,65 @@ class StocksMcpApi:
                                         "required": ["symbol"]
                                     }
                                 },
+                                {
+                                    "name": "place_options_spread",
+                                    "description": "Place a multi-leg option spread order",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {"type": "string"},
+                                            "strategy_type": {"type": "string"},
+                                            "legs": {"type": "array"},
+                                            "limit_price": {"type": "number"},
+                                            "expiration_date": {"type": "string"},
+                                            "entry_iv": {"type": "number"},
+                                            "time_in_force": {"type": "string", "default": "DAY"}
+                                        },
+                                        "required": ["symbol", "strategy_type", "legs", "limit_price", "expiration_date", "entry_iv"]
+                                    }
+                                },
+                                {
+                                    "name": "cancel_option_order",
+                                    "description": "Cancel a pending option order",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "order_id": {"type": "integer"}
+                                        },
+                                        "required": ["order_id"]
+                                    }
+                                },
+                                {
+                                    "name": "list_working_orders",
+                                    "description": "List all pending/working option orders",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {"type": "string"}
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "list_option_positions",
+                                    "description": "List all open option positions",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {"type": "string"}
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "analyze_option_position",
+                                    "description": "Analyze an option position",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "order_id": {"type": "integer"}
+                                        },
+                                        "required": ["order_id"]
+                                    }
+                                },
                             ]
                         }
                     }
@@ -1170,6 +1551,16 @@ class StocksMcpApi:
                         result = await self._analyze_volatility(arguments)
                     elif tool_name == "get_option_quote":
                         result = await self._get_option_quote(arguments)
+                    elif tool_name == "place_options_spread":
+                        result = await self._place_options_spread(arguments)
+                    elif tool_name == "cancel_option_order":
+                        result = await self._cancel_option_order(arguments)
+                    elif tool_name == "list_working_orders":
+                        result = await self._list_working_orders(arguments)
+                    elif tool_name == "list_option_positions":
+                        result = await self._list_option_positions(arguments)
+                    elif tool_name == "analyze_option_position":
+                        result = await self._analyze_option_position(arguments)
                     else:
                         return {
                             "jsonrpc": "2.0",

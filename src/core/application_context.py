@@ -54,8 +54,88 @@ class ApplicationContext:
             database_manager: The database manager instance to set
         """
         self._database_manager = database_manager
-    
-    
+
+    @property
+    def option_db_manager(self):
+        """
+        Get the option database manager instance.
+
+        Returns:
+            The option database manager instance
+        """
+        return self._option_db_manager
+
+    @option_db_manager.setter
+    def option_db_manager(self, option_db_manager):
+        """
+        Set the option database manager instance.
+
+        Args:
+            option_db_manager: The option database manager instance to set
+        """
+        self._option_db_manager = option_db_manager
+
+    @property
+    def option_order_service(self):
+        """
+        Get the option order service instance.
+
+        Returns:
+            The option order service instance
+        """
+        return self._option_order_service
+
+    @option_order_service.setter
+    def option_order_service(self, option_order_service):
+        """
+        Set the option order service instance.
+
+        Args:
+            option_order_service: The option order service instance to set
+        """
+        self._option_order_service = option_order_service
+
+    @property
+    def option_position_service(self):
+        """
+        Get the option position service instance.
+
+        Returns:
+            The option position service instance
+        """
+        return self._option_position_service
+
+    @option_position_service.setter
+    def option_position_service(self, option_position_service):
+        """
+        Set the option position service instance.
+
+        Args:
+            option_position_service: The option position service instance to set
+        """
+        self._option_position_service = option_position_service
+
+    @property
+    def option_analyzer_service(self):
+        """
+        Get the option analyzer service instance.
+
+        Returns:
+            The option analyzer service instance
+        """
+        return self._option_analyzer_service
+
+    @option_analyzer_service.setter
+    def option_analyzer_service(self, option_analyzer_service):
+        """
+        Set the option analyzer service instance.
+
+        Args:
+            option_analyzer_service: The option analyzer service instance to set
+        """
+        self._option_analyzer_service = option_analyzer_service
+
+
     @property
     def client(self):
         """

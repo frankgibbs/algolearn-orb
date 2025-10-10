@@ -1125,6 +1125,163 @@ class IBClient(EWrapper, EClient):
         else:
             return None
 
+    def place_combo_order(self, symbol, legs, limit_price, action="BUY", time_in_force="DAY", timeout=10):
+        """
+        Place a multi-leg option order using IB BAG/Combo contract
+
+        This creates an atomic multi-leg order where all legs fill together at the specified
+        net limit price. Useful for spreads, iron condors, butterflies, etc.
+
+        Args:
+            symbol: Stock symbol (required)
+            legs: List of leg dicts with keys: action, strike, right, expiry, ratio (required)
+                  Example: [
+                      {"action": "SELL", "strike": 290, "right": "P", "expiry": "20251107", "ratio": 1},
+                      {"action": "BUY", "strike": 285, "right": "P", "expiry": "20251107", "ratio": 1}
+                  ]
+            limit_price: Net credit (positive) or debit (negative) for entire combo (required)
+            action: Overall action "BUY" or "SELL" for the combo (default: "BUY")
+            time_in_force: "DAY" or "GTC" (default: "DAY")
+            timeout: Timeout in seconds (default: 10)
+
+        Returns:
+            Dict with order details including orderId, status, margin info
+
+        Raises:
+            ValueError: If parameters are invalid
+            RuntimeError: If order submission fails
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+        if not legs or len(legs) < 2:
+            raise ValueError("legs is REQUIRED and must have at least 2 legs")
+        if limit_price is None:
+            raise ValueError("limit_price is REQUIRED")
+
+        # Create BAG contract for combo order
+        combo_contract = Contract()
+        combo_contract.symbol = symbol
+        combo_contract.secType = "BAG"
+        combo_contract.currency = "USD"
+        combo_contract.exchange = "SMART"
+
+        # Add combo legs
+        combo_contract.comboLegs = []
+        for leg_data in legs:
+            # Validate leg data
+            if "action" not in leg_data or "strike" not in leg_data or "right" not in leg_data or "expiry" not in leg_data:
+                raise ValueError("Each leg must have: action, strike, right, expiry")
+
+            # Create individual option contract to get conId
+            opt_contract = self.get_option_contract(
+                symbol=symbol,
+                expiry=leg_data["expiry"],
+                strike=leg_data["strike"],
+                right=leg_data["right"]
+            )
+
+            # Get contract details to obtain conId
+            contract_details = self.get_contract_details(opt_contract, timeout=5)
+            if not contract_details:
+                raise RuntimeError(f"Could not get contract details for {symbol} {leg_data['strike']}{leg_data['right']}")
+
+            # Create combo leg
+            from ibapi.contract import ComboLeg
+            combo_leg = ComboLeg()
+            combo_leg.conId = contract_details.conId
+            combo_leg.ratio = leg_data.get("ratio", 1)
+            combo_leg.action = leg_data["action"]  # "BUY" or "SELL"
+            combo_leg.exchange = "SMART"
+
+            combo_contract.comboLegs.append(combo_leg)
+
+        # Create limit order for the combo
+        order = Order()
+        order.action = action
+        order.orderType = "LMT"
+        order.totalQuantity = 1  # 1 combo = 1 contract of each leg
+        order.lmtPrice = limit_price
+        order.tif = time_in_force
+        order.transmit = True
+
+        # Submit the combo order
+        order_id = self.get_next_order_id()
+        if not order_id:
+            raise RuntimeError("Could not get next order ID")
+
+        logger.info(f"Placing combo order {order_id} for {symbol}: {len(legs)} legs @ ${limit_price:.2f}")
+
+        result = self.submitOrder(order_id, combo_contract, order, timeout)
+        if result:
+            return result
+        else:
+            raise RuntimeError(f"Combo order submission failed for {symbol}")
+
+    def get_contract_details(self, contract, timeout=10):
+        """
+        Get contract details including conId for a contract
+
+        Args:
+            contract: Contract object (required)
+            timeout: Timeout in seconds (default: 10)
+
+        Returns:
+            ContractDetails object or None if not found
+
+        Raises:
+            ValueError: If contract is invalid
+        """
+        if not contract:
+            raise ValueError("contract is REQUIRED")
+
+        request_id = self.get_next_request_id()
+
+        # Clear previous data
+        self.contract_details_received_event.clear()
+        self.contract_details[request_id] = None
+
+        logger.debug(f"Requesting contract details (reqId: {request_id})")
+
+        # Request contract details
+        self.reqContractDetails(request_id, contract)
+
+        if self.contract_details_received_event.wait(timeout=timeout):
+            details = self.contract_details.get(request_id)
+            self.contract_details.pop(request_id, None)
+            return details
+        else:
+            logger.warning(f"Timeout waiting for contract details")
+            return None
+
+    def get_option_positions(self, timeout=10):
+        """
+        Get all current option positions from IB portfolio
+
+        Returns:
+            List of dicts with position info: symbol, strike, right, expiry, position, avgCost, marketValue, unrealizedPNL
+
+        Raises:
+            TimeoutError: If request times out
+        """
+        # Request current positions
+        self.position_received_event.clear()
+        self.positions.clear()
+
+        logger.info("Requesting option positions from IB")
+        self.reqPositions()
+
+        if self.position_received_event.wait(timeout=timeout):
+            # Filter for options only
+            option_positions = []
+            for pos in self.positions.values():
+                if pos.get('secType') == 'OPT' or pos.get('secType') == 'BAG':
+                    option_positions.append(pos)
+
+            logger.info(f"Found {len(option_positions)} option positions")
+            return option_positions
+        else:
+            raise TimeoutError("Timeout waiting for option positions")
+
     def get_fundamental_data(self, symbol, report_type="RealtimeRatios", timeout=10):
         """Get fundamental data for a stock"""
         request_id = self.get_next_request_id()

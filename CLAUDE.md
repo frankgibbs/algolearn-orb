@@ -306,28 +306,63 @@ Review the output to determine:
 - Term structure slope (calendar opportunities)
 - Trading signal
 
-#### Step 2: Select Appropriate Strategies Based on Signal
+#### Step 2: Analyze Price Trend (REQUIRED)
+```bash
+get_stock_bars(symbol="XYZ", duration="90 D", bar_size="1 day")
+```
+
+**CRITICAL:** Always analyze recent price action before selecting strategy. Review last 20-30 days:
+
+**Trend Analysis:**
+- Identify trend direction (uptrend, downtrend, sideways)
+- Check for failed breakouts or reversals
+- Locate key support/resistance levels
+- Assess recent volume patterns
+- Note any gaps or significant price moves
+
+**Strategy Alignment:**
+- **Bull Put Spread**: Requires neutral-to-bullish trend, avoid during downtrends
+- **Bear Call Spread**: Requires neutral-to-bearish trend, avoid during uptrends
+- **Iron Condor**: Best in sideways/range-bound markets
+- **Vertical Spreads**: Must align with directional bias
+
+**Red Flags:**
+- ❌ Failed breakout followed by reversal
+- ❌ Multiple consecutive down days on high volume (for bullish strategies)
+- ❌ Multiple consecutive up days on high volume (for bearish strategies)
+- ❌ Breaking below key support (for bullish strategies)
+- ❌ Breaking above key resistance (for bearish strategies)
+
+**Example: BA Analysis**
+```
+Recent: Oct 8 high $225 → Oct 10 low $210 (-6.6% in 2 days)
+Assessment: Failed breakout, bearish short-term
+Conclusion: AVOID bull put spreads - wait for stabilization
+```
+
+#### Step 3: Select Appropriate Strategies Based on Signal + Trend
 
 **SELL_VOLATILITY (IV/HV > 1.25):**
-- Iron Condor (defined risk, premium collection)
-- Short Strangle (higher premium, undefined risk)
-- Iron Butterfly (max premium, tight profit zone)
+- Iron Condor (defined risk, premium collection) - requires sideways trend
+- Bull Put Spread - requires neutral-to-bullish trend
+- Bear Call Spread - requires neutral-to-bearish trend
+- Iron Butterfly (max premium, tight profit zone) - requires sideways trend
 
 **BUY_VOLATILITY (IV/HV < 0.85):**
-- Long Straddle/Strangle
-- Calendar spreads (if term structure supports)
-- Vertical spreads (directional bias)
+- Long Straddle/Strangle - neutral on direction
+- Calendar spreads (if term structure supports) - check trend alignment
+- Vertical spreads (directional bias) - MUST confirm trend supports direction
 
 **NEUTRAL (0.85 < IV/HV < 1.25):**
-- Iron Condor (balanced approach)
-- Vertical spreads with directional view
+- Iron Condor (balanced approach) - requires sideways trend
+- Vertical spreads with directional view - MUST confirm trend supports direction
 
-#### Step 3: Get Real Market Prices
+#### Step 4: Get Real Market Prices
 Use `get_option_quote` to fetch actual bid/ask for all legs of the strategy.
 
 **IMPORTANT:** Always use real market prices - never estimate or guess option prices.
 
-#### Step 4: Calculate Strategy Metrics
+#### Step 5: Calculate Strategy Metrics
 
 For each strategy, calculate:
 - **Premium collected**: Net credit received
@@ -337,13 +372,14 @@ For each strategy, calculate:
 - **Profit zone**: Distance between breakevens as % of underlying price
 - **Days to expiration**: Time value decay
 
-#### Step 5: Compare Strategies & Recommend
+#### Step 6: Compare Strategies & Recommend
 
 Provide analysis comparing:
 - Risk-defined vs undefined risk
 - ROI vs probability of profit
 - Capital efficiency
 - Management complexity
+- **Trend alignment**: Confirm strategy direction matches price action
 
 ### Strategy Calculation Examples
 
@@ -387,7 +423,8 @@ Profit zone: $9.20 (9.2%)
 3. **Consider probability of profit** based on profit zone width
 4. **Account for liquidity** - tight bid/ask spreads are crucial
 5. **Factor in commission costs** for multi-leg strategies
-6. **Use volatility analysis to guide strategy selection** - don't trade against the regime
+6. **Analyze price trend before selecting strategy** - NEVER place bullish spreads during downtrends or bearish spreads during uptrends
+7. **Use volatility analysis to guide strategy selection** - don't trade against the volatility regime (high IV = sell premium, low IV = buy options)
 
 ### Service Layer
 

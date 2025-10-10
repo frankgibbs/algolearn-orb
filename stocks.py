@@ -80,6 +80,9 @@ class StocksService(IObserver):
         # Position state transitions every 30 seconds
         schedule.every(30).seconds.do(self.manage_positions)
 
+        # Option position state transitions every 30 seconds
+        schedule.every(30).seconds.do(self.manage_option_positions)
+
         # Trailing stop management every minute during market hours
         schedule.every(60).seconds.do(self.move_stop_orders)
 
@@ -141,6 +144,12 @@ class StocksService(IObserver):
         market_open = self.state_manager.getConfigValue(CONFIG_MARKET_OPEN)
         if market_open:
             self.subject.notify({FIELD_TYPE: EVENT_TYPE_MANAGE_STOCK_POSITIONS})
+
+    def manage_option_positions(self):
+        """Monitor option position state transitions (PENDING → OPEN)"""
+        market_open = self.state_manager.getConfigValue(CONFIG_MARKET_OPEN)
+        if market_open:
+            self.subject.notify({FIELD_TYPE: EVENT_TYPE_MANAGE_OPTION_POSITIONS})
 
     def move_stop_orders(self):
         """Handle trailing stop order modifications"""
@@ -254,6 +263,24 @@ def main():
     # Initialize database_manager FIRST so commands can access it
     database_manager = StocksDatabaseManager(application_context)
     application_context.database_manager = database_manager
+
+    # Initialize options database manager and services
+    from src.options.option_database_manager import OptionDatabaseManager
+    from src.options.services.option_order_service import OptionOrderService
+    from src.options.services.option_position_service import OptionPositionService
+    from src.options.services.option_analyzer_service import OptionAnalyzerService
+
+    option_db_manager = OptionDatabaseManager(application_context)
+    application_context.option_db_manager = option_db_manager
+
+    option_order_service = OptionOrderService(application_context)
+    application_context.option_order_service = option_order_service
+
+    option_position_service = OptionPositionService(application_context)
+    application_context.option_position_service = option_position_service
+
+    option_analyzer_service = OptionAnalyzerService(application_context)
+    application_context.option_analyzer_service = option_analyzer_service
 
     # Initialize all other managers
     stocks_service = StocksService(application_context)
