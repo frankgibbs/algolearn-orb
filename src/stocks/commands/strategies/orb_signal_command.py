@@ -153,23 +153,13 @@ class ORBSignalCommand(Command):
         breakout_signal = self._check_breakout_signal(opening_range, previous_close, symbol)
 
         if breakout_signal['signal'] != 'NONE':
-            # Check volume confirmation before position limits
+            # Check volume confirmation
             volume_confirmed = self._check_volume_confirmation(symbol, previous_bar, timeframe_minutes, ib_client)
 
             if not volume_confirmed:
-                # Volume confirmation failed - create fade signal (opposite position)
-                logger.info(f"{symbol} - Volume confirmation failed, creating fade signal")
-                fade_signal = self._create_fade_signal(breakout_signal, opening_range, symbol)
-                # Check if fade signal is valid (might be NONE if no quotes available)
-                if fade_signal['signal'] == 'NONE':
-                    logger.info(f"{symbol} - Unable to create fade signal, skipping")
-                    return False
-                signal_to_use = fade_signal
-                signal_type = "FADE"
-            else:
-                # Volume confirmed - use original breakout signal
-                signal_to_use = breakout_signal
-                signal_type = "BREAKOUT"
+                # Volume confirmation failed - skip the trade
+                logger.info(f"{symbol} - Volume confirmation failed, skipping trade")
+                return False
 
             # Check position limits before generating signal
             if not self._check_position_limits():
@@ -177,7 +167,7 @@ class ORBSignalCommand(Command):
                 return False
 
             # Publish position opening signal
-            self._publish_position_signal(symbol, signal_to_use, opening_range, ib_client, signal_type)
+            self._publish_position_signal(symbol, breakout_signal, opening_range, ib_client)
             return True
 
         return False
@@ -334,66 +324,7 @@ class ORBSignalCommand(Command):
         # No breakout found in history
         return None, None
 
-    def _create_fade_signal(self, breakout_signal, opening_range, symbol):
-        """
-        Create a fade signal (opposite of breakout signal) for low-volume breakouts
-        Uses real-time bid/ask for accurate entry prices
-
-        Args:
-            breakout_signal: Original breakout signal data
-            opening_range: Opening range record from database
-            symbol: Stock symbol for getting real-time quotes
-
-        Returns:
-            Dict with fade signal info: {'signal': 'LONG'|'SHORT', 'entry_price': float, ...}
-        """
-        # Access IBClient directly from base class
-        ib_client = self.application_context.client
-
-        if breakout_signal['signal'] == 'LONG':
-            # Fade a failed upward breakout by going SHORT
-            # MUST get real-time BID price for selling
-            contract = ib_client.get_stock_contract(symbol)
-            quote = ib_client.get_stock_market_data(contract)
-
-            if not quote or not quote.get('bid') or quote['bid'] <= 0:
-                logger.warning(f"{symbol}: No BID price for fade SHORT, skipping signal")
-                return {'signal': 'NONE'}  # Don't trade without accurate pricing
-
-            entry_price = round(quote['bid'], 2)
-            logger.info(f"{symbol} FADE SHORT: Using real-time BID ${entry_price}")
-
-            return {
-                'signal': 'SHORT',
-                'entry_price': entry_price,
-                'stop_loss': self._calculate_stop_loss('SHORT', entry_price, opening_range),
-                'take_profit': round(opening_range.range_low, 2),
-                'range_size': opening_range.range_size
-            }
-        elif breakout_signal['signal'] == 'SHORT':
-            # Fade a failed downward breakout by going LONG
-            # MUST get real-time ASK price for buying
-            contract = ib_client.get_stock_contract(symbol)
-            quote = ib_client.get_stock_market_data(contract)
-
-            if not quote or not quote.get('ask') or quote['ask'] <= 0:
-                logger.warning(f"{symbol}: No ASK price for fade LONG, skipping signal")
-                return {'signal': 'NONE'}  # Don't trade without accurate pricing
-
-            entry_price = round(quote['ask'], 2)
-            logger.info(f"{symbol} FADE LONG: Using real-time ASK ${entry_price}")
-
-            return {
-                'signal': 'LONG',
-                'entry_price': entry_price,
-                'stop_loss': self._calculate_stop_loss('LONG', entry_price, opening_range),
-                'take_profit': round(opening_range.range_high, 2),
-                'range_size': opening_range.range_size
-            }
-        else:
-            raise ValueError(f"Cannot create fade signal for {breakout_signal['signal']}")
-
-    def _publish_position_signal(self, symbol, breakout_signal, opening_range, ib_client, signal_type="BREAKOUT"):
+    def _publish_position_signal(self, symbol, breakout_signal, opening_range, ib_client):
         """
         Publish EVENT_TYPE_OPEN_POSITION event for execution
 
@@ -402,7 +333,6 @@ class ORBSignalCommand(Command):
             breakout_signal: Breakout signal data
             opening_range: Opening range record
             ib_client: IBClient instance from application context
-            signal_type: Type of signal - "BREAKOUT" or "FADE"
         """
         # Calculate position size based on account risk AND margin
         # Get real account value from IB (no silent defaults)
@@ -442,21 +372,18 @@ class ORBSignalCommand(Command):
             "take_profit": breakout_signal['take_profit'],
             "range_size": breakout_signal['range_size'],
             "opening_range_id": opening_range.id,
-            "reason": f"ORB {signal_type.lower()} {breakout_signal['signal'].lower()} of range"
+            "reason": f"ORB breakout {breakout_signal['signal'].lower()} of range"
         }
 
         # Publish the event
         event = {FIELD_TYPE: EVENT_TYPE_OPEN_POSITION, FIELD_DATA: position_data}
         self.application_context.subject.notify(event)
 
-        # Choose emoji based on signal type
-        emoji = "🔄" if signal_type == "FADE" else "🚀"
-
-        logger.info(f"{emoji} ORB {signal_type} Published: {position_data['action']} {symbol} @ {breakout_signal['entry_price']}")
+        logger.info(f"🚀 ORB BREAKOUT Published: {position_data['action']} {symbol} @ {breakout_signal['entry_price']}")
 
         # Send Telegram notification
         self.state_manager.sendTelegramMessage(
-            f"{emoji} ORB {signal_type}: {position_data['action']} {symbol}\n"
+            f"🚀 ORB BREAKOUT: {position_data['action']} {symbol}\n"
             f"Entry: ${breakout_signal['entry_price']:.2f}\n"
             f"Stop: ${breakout_signal['stop_loss']:.2f}\n"
             f"Target: ${breakout_signal['take_profit']:.2f}\n"

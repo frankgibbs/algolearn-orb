@@ -11,7 +11,7 @@ services:
       - "8005:8003"  # MCP API
       - "8006:8080"  # Dashboard
     environment:
-      - HOST=ib-gateway-paper
+      - HOST=paper
       - PORT=4004
       - IB_CLIENT_ID=80
       - ACCOUNT=DU123456
