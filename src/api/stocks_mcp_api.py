@@ -385,6 +385,29 @@ class StocksMcpApi:
                         "required": ["order_id"]
                     }
                 ),
+                Tool(
+                    name="close_option_position",
+                    description="Close an open option position by placing offsetting order",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "opening_order_id": {
+                                "type": "integer",
+                                "description": "Original position order ID to close"
+                            },
+                            "exit_reason": {
+                                "type": "string",
+                                "description": "Reason for closing (e.g., PROFIT_TARGET, MANUAL_CLOSE)",
+                                "default": "MANUAL_CLOSE"
+                            },
+                            "limit_price": {
+                                "type": "number",
+                                "description": "Optional limit price for closing order (if not provided, calculated from market)"
+                            }
+                        },
+                        "required": ["opening_order_id"]
+                    }
+                ),
             ]
 
         @self.server.call_tool()
@@ -422,6 +445,8 @@ class StocksMcpApi:
                     return await self._list_option_positions(arguments or {})
                 elif name == "analyze_option_position":
                     return await self._analyze_option_position(arguments or {})
+                elif name == "close_option_position":
+                    return await self._close_option_position(arguments or {})
                 else:
                     raise ValueError(f"Unknown tool: {name}")
             except Exception as e:
@@ -1083,6 +1108,46 @@ class StocksMcpApi:
             logger.error(f"Error in _cancel_option_order: {e}")
             return [TextContent(type="text", text=f"Error canceling option order: {str(e)}", meta={})]
 
+    async def _close_option_position(self, args: dict) -> list[TextContent]:
+        """Close an open option position by placing offsetting order"""
+        from src.options.services.option_order_service import OptionOrderService
+
+        opening_order_id = args.get("opening_order_id")
+        exit_reason = args.get("exit_reason", "MANUAL_CLOSE")
+        limit_price = args.get("limit_price")
+
+        if not opening_order_id:
+            return [TextContent(type="text", text="Error: opening_order_id is required", meta={})]
+
+        try:
+            # Initialize service
+            order_service = OptionOrderService(self.application_context)
+
+            # Close the position
+            close_result = order_service.close_position(
+                opening_order_id=opening_order_id,
+                exit_reason=exit_reason,
+                limit_price=limit_price
+            )
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "opening_order_id": close_result['opening_order_id'],
+                "closing_order_id": close_result['closing_order_id'],
+                "status": close_result['status'],
+                "message": close_result['message'],
+                "limit_price": close_result['limit_price'],
+                "expected_pnl": close_result['expected_pnl'],
+                "exit_reason": close_result['exit_reason']
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _close_option_position: {e}")
+            return [TextContent(type="text", text=f"Error closing option position: {str(e)}", meta={})]
+
     async def _list_working_orders(self, args: dict) -> list[TextContent]:
         """List all pending/working option orders"""
         from src.options.services.option_order_service import OptionOrderService
@@ -1226,6 +1291,7 @@ class StocksMcpApi:
                     "get_option_quote",
                     "place_options_spread",
                     "cancel_option_order",
+                    "close_option_position",
                     "list_working_orders",
                     "list_option_positions",
                     "analyze_option_position"
@@ -1521,6 +1587,19 @@ class StocksMcpApi:
                                         "required": ["order_id"]
                                     }
                                 },
+                                {
+                                    "name": "close_option_position",
+                                    "description": "Close an open option position by placing offsetting order",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "opening_order_id": {"type": "integer"},
+                                            "exit_reason": {"type": "string", "default": "MANUAL_CLOSE"},
+                                            "limit_price": {"type": "number"}
+                                        },
+                                        "required": ["opening_order_id"]
+                                    }
+                                },
                             ]
                         }
                     }
@@ -1561,6 +1640,8 @@ class StocksMcpApi:
                         result = await self._list_option_positions(arguments)
                     elif tool_name == "analyze_option_position":
                         result = await self._analyze_option_position(arguments)
+                    elif tool_name == "close_option_position":
+                        result = await self._close_option_position(arguments)
                     else:
                         return {
                             "jsonrpc": "2.0",

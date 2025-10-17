@@ -1,9 +1,8 @@
 version: '3.8'
 
 services:
-  orb-stocks:
+  stocks:
     build: .
-    container_name: orb-stocks
     restart: unless-stopped
     volumes:
       - shared-volume:/app/data

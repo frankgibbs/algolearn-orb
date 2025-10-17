@@ -19,6 +19,7 @@ class OptionPosition(Base):
 
     # Core identification
     id = Column(Integer, primary_key=True, autoincrement=False)  # Parent order ID from IB
+    closing_order_id = Column(Integer, nullable=False, default=0)  # IB order ID for closing trade (0 = no closing order)
     symbol = Column(String(10), nullable=False)
     strategy_type = Column(String(50), nullable=False)  # "BULL_PUT_SPREAD", "IRON_CONDOR", etc.
 

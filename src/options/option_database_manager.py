@@ -235,6 +235,49 @@ class OptionDatabaseManager:
         finally:
             session.close()
 
+    def set_closing_order(self, opening_order_id: int, closing_order_id: int, exit_reason: str):
+        """
+        Link a closing order to its opening position
+
+        Args:
+            opening_order_id: Original position ID (required)
+            closing_order_id: Closing order ID from IB (required)
+            exit_reason: Reason for closing (required)
+
+        Raises:
+            ValueError: If parameters invalid
+            RuntimeError: If position not found or not OPEN
+        """
+        if not opening_order_id:
+            raise ValueError("opening_order_id is REQUIRED")
+        if not closing_order_id:
+            raise ValueError("closing_order_id is REQUIRED")
+        if not exit_reason:
+            raise ValueError("exit_reason is REQUIRED")
+
+        session = self.get_session()
+        try:
+            position = session.query(OptionPosition).filter_by(id=opening_order_id).first()
+            if not position:
+                raise RuntimeError(f"Position not found: {opening_order_id}")
+            if position.status != "OPEN":
+                raise RuntimeError(f"Position {opening_order_id} is not OPEN (status: {position.status})")
+            if position.closing_order_id != 0:
+                raise RuntimeError(f"Position {opening_order_id} already has closing order: {position.closing_order_id}")
+
+            position.closing_order_id = closing_order_id
+            position.exit_reason = exit_reason
+            session.commit()
+
+            logger.info(f"Position {opening_order_id} linked to closing order {closing_order_id}")
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error setting closing order: {e}")
+            raise
+        finally:
+            session.close()
+
     def close_position(self, order_id: int, exit_value: float, exit_reason: str, realized_pnl: float):
         """
         Close an option position

@@ -161,6 +161,148 @@ class OptionOrderService:
             logger.error(f"Error canceling order: {e}")
             raise RuntimeError(f"Failed to cancel order: {str(e)}")
 
+    def close_position(
+        self,
+        opening_order_id: int,
+        exit_reason: str = "MANUAL_CLOSE",
+        limit_price: float = None
+    ) -> Dict:
+        """
+        Close an existing option position by placing offsetting order
+
+        Args:
+            opening_order_id: Original position order ID (required)
+            exit_reason: Reason for closing (default: "MANUAL_CLOSE")
+            limit_price: Optional limit price (if None, calculates from market)
+
+        Returns:
+            Dict with keys: closing_order_id, status, message, limit_price, expected_pnl
+
+        Raises:
+            ValueError: If opening_order_id invalid
+            RuntimeError: If position not found, not OPEN, missing quotes, or close fails
+        """
+        if not opening_order_id:
+            raise ValueError("opening_order_id is REQUIRED")
+        if not exit_reason:
+            raise ValueError("exit_reason is REQUIRED")
+
+        logger.info(f"Closing position {opening_order_id}: {exit_reason}")
+
+        try:
+            # 1. Get original position from database
+            position = self.db_manager.get_position(opening_order_id)
+            if not position:
+                raise RuntimeError(f"Position not found: {opening_order_id}")
+
+            # 2. Validate position is OPEN
+            if position.status != "OPEN":
+                raise RuntimeError(f"Position {opening_order_id} is not OPEN (status: {position.status})")
+
+            # 3. Build offsetting legs (reverse BUY/SELL actions)
+            offsetting_legs = []
+            for leg in position.legs:
+                offsetting_legs.append({
+                    'action': 'SELL' if leg.action == 'BUY' else 'BUY',
+                    'strike': leg.strike,
+                    'right': leg.right,
+                    'expiry': leg.expiry,
+                    'quantity': leg.quantity
+                })
+
+            # 4. Get current market prices if limit_price not provided
+            if limit_price is None:
+                # Calculate current spread value from market - NO FALLBACKS
+                current_value = 0.0
+                for leg in position.legs:
+                    quote = self.client.get_option_greeks(
+                        symbol=position.symbol,
+                        expiry=leg.expiry,
+                        strike=leg.strike,
+                        right=leg.right
+                    )
+
+                    # STRICT: No quote = cannot close
+                    if not quote:
+                        raise RuntimeError(
+                            f"No quote available for {position.symbol} {leg.strike}{leg.right} exp:{leg.expiry}. "
+                            f"Cannot calculate closing price - will not proceed."
+                        )
+
+                    # STRICT: Require valid bid and ask
+                    bid = quote.get('bid')
+                    ask = quote.get('ask')
+
+                    if bid is None or ask is None:
+                        raise RuntimeError(
+                            f"Missing bid/ask for {position.symbol} {leg.strike}{leg.right} exp:{leg.expiry}. "
+                            f"bid={bid}, ask={ask}. Cannot calculate closing price - will not proceed."
+                        )
+
+                    if bid <= 0 or ask <= 0:
+                        raise RuntimeError(
+                            f"Invalid bid/ask for {position.symbol} {leg.strike}{leg.right} exp:{leg.expiry}. "
+                            f"bid={bid}, ask={ask}. Prices must be positive - will not proceed."
+                        )
+
+                    # Use mid price - both bid and ask validated above
+                    leg_price = (bid + ask) / 2
+
+                    # For closing: opposite of original action
+                    if leg.action == 'BUY':
+                        current_value += leg_price  # We'll sell this
+                    else:
+                        current_value -= leg_price  # We'll buy this
+
+                # Add small buffer for fill (0.05)
+                limit_price = abs(current_value) + 0.05
+                logger.info(f"Calculated closing limit price: ${limit_price:.2f}")
+
+            # 5. Place offsetting combo order
+            order_result = self.client.place_combo_order(
+                symbol=position.symbol,
+                legs=offsetting_legs,
+                limit_price=limit_price,
+                action="BUY",  # Always BUY the combo
+                time_in_force="DAY"
+            )
+
+            if not order_result:
+                raise RuntimeError("IB order submission returned no result")
+
+            closing_order_id = order_result.get('orderId')
+            if not closing_order_id:
+                raise RuntimeError("No order ID returned from IB for closing order")
+
+            # 6. Update original position with closing_order_id
+            self.db_manager.set_closing_order(
+                opening_order_id=opening_order_id,
+                closing_order_id=closing_order_id,
+                exit_reason=exit_reason
+            )
+
+            # 7. Calculate expected P&L
+            if position.is_credit_spread:
+                expected_pnl = (position.net_credit * 100) - (limit_price * 100)
+            else:
+                expected_pnl = (limit_price * 100) - abs(position.net_credit * 100)
+
+            logger.info(f"Closing order {closing_order_id} placed for position {opening_order_id}")
+
+            return {
+                'closing_order_id': closing_order_id,
+                'opening_order_id': opening_order_id,
+                'status': 'CLOSING_ORDER_PLACED',
+                'message': f"Closing order {closing_order_id} placed for position {opening_order_id}",
+                'limit_price': limit_price,
+                'expected_pnl': expected_pnl,
+                'exit_reason': exit_reason
+            }
+
+        except Exception as e:
+            logger.error(f"Error closing position: {e}")
+            raise RuntimeError(f"Failed to close position: {str(e)}")
+
     def list_working_orders(self, symbol: str = None) -> List[Dict]:
         """
         List all pending/working option orders
