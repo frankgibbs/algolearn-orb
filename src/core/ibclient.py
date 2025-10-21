@@ -578,10 +578,10 @@ class IBClient(EWrapper, EClient):
     def tickSize(self, reqId: int, tickType: int, size: float):
         """Callback when size data is received."""
         super().tickSize(reqId, tickType, size)
-        
+
         if reqId not in self.market_data:
             self.market_data[reqId] = {}
-        
+
         # Map tick types to readable names
         if tickType == 0:  # Bid size
             self.market_data[reqId]['bid_size'] = size
@@ -591,6 +591,18 @@ class IBClient(EWrapper, EClient):
             logger.debug(f"Ask size: {size}")
         elif tickType == 5:  # Last size
             self.market_data[reqId]['last_size'] = size
+        elif tickType == 27:  # OPTION_CALL_OPEN_INTEREST
+            self.market_data[reqId]['open_interest'] = int(size)
+            logger.debug(f"Option call open interest: {int(size)}")
+        elif tickType == 28:  # OPTION_PUT_OPEN_INTEREST
+            self.market_data[reqId]['open_interest'] = int(size)
+            logger.debug(f"Option put open interest: {int(size)}")
+        elif tickType == 29:  # OPTION_CALL_VOLUME
+            self.market_data[reqId]['volume'] = int(size)
+            logger.debug(f"Option call volume: {int(size)}")
+        elif tickType == 30:  # OPTION_PUT_VOLUME
+            self.market_data[reqId]['volume'] = int(size)
+            logger.debug(f"Option put volume: {int(size)}")
     
     def tickSnapshotEnd(self, reqId: int):
         """Callback when snapshot is complete."""
@@ -1000,12 +1012,13 @@ class IBClient(EWrapper, EClient):
             del self.market_data[request_id]
         
         logger.info(f"Requesting Greeks for {symbol} {strike}{right} exp:{expiry} (reqId: {request_id})")
-        
-        # Request market data with Greeks (tick type 13 includes Greeks)
+
+        # Request market data with Greeks, volume, and open interest
+        # Tick types: 13=Greeks, 100=Option Volume, 101=Option Open Interest
         self.reqMktData(
             reqId=request_id,
             contract=option_contract,
-            genericTickList="13",  # Request Greeks
+            genericTickList="13,100,101",  # Request Greeks, Volume, and Open Interest
             snapshot=True,
             regulatorySnapshot=False,
             mktDataOptions=[]

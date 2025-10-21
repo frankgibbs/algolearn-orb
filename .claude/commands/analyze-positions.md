@@ -8,9 +8,52 @@ Analyze all open option positions and provide detailed management guidance:
 
 Use `list_option_positions` MCP tool (no arguments needed)
 
-## Step 2: Position-by-Position Analysis
+## Step 2: Get Real-Time Bid/Ask for ALL Option Legs (CRITICAL)
 
-For EACH open position, provide detailed analysis:
+**IMPORTANT**: Never trust the "current_value" field from position data - always calculate actual cost to close using real market prices.
+
+For EACH position, use `mcp__stocks__get_option_quote` to fetch current bid/ask for ALL legs:
+
+**For each leg in the position:**
+- Symbol: [from position]
+- Expiry: [from position, format: YYYYMMDD]
+- Strike: [from position]
+- Right: [C or P from position]
+
+**Calculate actual cost to close:**
+
+For spreads, use this formula:
+- **SHORT legs** (action = "SELL"): Buy back at ASK price
+- **LONG legs** (action = "BUY"): Sell at BID price
+
+**Example for Iron Condor:**
+```
+Bull Put Spread (205P/200P):
+- Sell 200P long at BID: $3.50
+- Buy 205P short at ASK: $4.25
+- Put spread cost: $0.75 debit
+
+Bear Call Spread (255C/260C):
+- Sell 260C long at BID: $9.05
+- Buy 255C short at ASK: $10.65
+- Call spread cost: $1.60 debit
+
+Total to close: $2.35 debit ($235)
+Entry credit: $2.15 ($215)
+ACTUAL P&L: -$20 loss
+```
+
+**CRITICAL RULES:**
+- Always fetch ALL legs before calculating P&L
+- Use ASK when buying back short positions
+- Use BID when selling long positions
+- Account for quantity (multiply by quantity for each leg)
+- Ignore the "current_value" field - calculate from real quotes
+- If bid/ask is null, note illiquid market and estimate conservatively
+
+## Step 3: Position-by-Position Analysis
+
+For EACH open position, provide detailed analysis using the REAL calculated values from Step 2:
 
 ### Position Header
 ```
@@ -150,7 +193,7 @@ Provide ONE clear recommendation:
 - New breakeven: $X.XX
 ```
 
-## Step 3: Portfolio-Level Analysis
+## Step 4: Portfolio-Level Analysis
 
 After analyzing all positions, provide portfolio summary:
 
@@ -201,7 +244,7 @@ Average DTE: X days
 **Earnings/Events** (if any symbols have earnings before expiration):
 - [SYMBOL]: Earnings on [DATE] - consider closing before
 
-## Step 4: Final Portfolio Recommendations
+## Step 5: Final Portfolio Recommendations
 
 Provide strategic guidance:
 

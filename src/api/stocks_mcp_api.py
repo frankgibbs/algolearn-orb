@@ -996,6 +996,8 @@ class StocksMcpApi:
                 "ask": greeks_data.get('ask'),
                 "last": greeks_data.get('last'),
                 "mid": (greeks_data.get('bid', 0) + greeks_data.get('ask', 0)) / 2 if greeks_data.get('bid') and greeks_data.get('ask') else None,
+                "volume": greeks_data.get('volume'),
+                "open_interest": greeks_data.get('open_interest'),
                 "greeks": {
                     "iv": greeks_data.get('iv'),
                     "delta": greeks_data.get('delta'),

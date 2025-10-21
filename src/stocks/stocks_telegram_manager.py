@@ -306,7 +306,7 @@ class StocksTelegramManager(IObserver):
 
             # Get candidates from database
             database_manager = StocksDatabaseManager(self.application_context)
-            candidates = database_manager.get_candidates(today, selected_only=False)
+            candidates = database_manager.get_candidates(today, selected_only=True)
 
             if not candidates:
                 update.message.reply_text("No scan results for today")
@@ -319,7 +319,7 @@ class StocksTelegramManager(IObserver):
             table.align['Change'] = 'r'  # Right align change
 
             # Add rows: rank, symbol, pre_market_change
-            for candidate in candidates[:25]:  # Limit to 25 for readability
+            for candidate in candidates:  # Already limited to top 25 by selected=True
                 table.add_row([
                     candidate.rank,
                     candidate.symbol,

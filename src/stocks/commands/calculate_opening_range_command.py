@@ -1,25 +1,26 @@
 from src.core.command import Command
 from src.core.constants import *
 from src.stocks.services.stocks_strategy_service import StocksStrategyService
-from src.stocks.stocks_config import STOCK_SYMBOLS, get_stock_config
+from src.stocks.stocks_config import get_stock_config
+from src.stocks.stocks_database_manager import StocksDatabaseManager
 from src import logger
 import pytz
 from datetime import datetime, time
 from prettytable import PrettyTable
 
 class CalculateOpeningRangeCommand(Command):
-    """Calculate opening range based on CONFIG_ORB_TIMEFRAME (15/30/60 mins after market open)"""
+    """Calculate opening range for selected candidates from pre-market scan based on CONFIG_ORB_TIMEFRAME (15/30/60 mins after market open)"""
 
     def execute(self, event):
         """
-        Calculate opening range for all stocks in STOCK_SYMBOLS
+        Calculate opening range for selected candidates from today's pre-market scan
 
         Args:
             event: Event data (required)
 
         Raises:
             ValueError: If event is None
-            RuntimeError: If timing is invalid or configuration missing
+            RuntimeError: If timing is invalid, configuration missing, or no scan results found
         """
         if event is None:
             raise ValueError("event is REQUIRED")
@@ -35,14 +36,26 @@ class CalculateOpeningRangeCommand(Command):
         if timeframe_minutes is None:
             raise ValueError("CONFIG_ORB_TIMEFRAME not configured")
 
-        # Initialize service
+        # Initialize services
         strategy_service = StocksStrategyService(self.application_context)
+        database_manager = StocksDatabaseManager(self.application_context)
 
-        logger.info(f"Calculating {timeframe_minutes}m opening ranges for {len(STOCK_SYMBOLS)} stocks")
+        # Get selected candidates from today's pre-market scan
+        today = now.date()
+        candidates = database_manager.get_candidates(today, selected_only=True)
 
-        # Process each stock
+        if not candidates:
+            raise RuntimeError(
+                "No selected candidates found for today. "
+                "Run the pre-market scan (/scan) first to identify trading candidates."
+            )
+
+        logger.info(f"Calculating {timeframe_minutes}m opening ranges for {len(candidates)} selected candidates")
+
+        # Process each candidate from scan
         valid_ranges = []
-        for symbol in STOCK_SYMBOLS:
+        for candidate in candidates:
+            symbol = candidate.symbol
             range_data = self._calculate_range_for_symbol(symbol, timeframe_minutes, strategy_service, now)
             if range_data:  # Only add if valid
                 valid_ranges.append(range_data)
@@ -146,10 +159,11 @@ class CalculateOpeningRangeCommand(Command):
         # Calculate range from opening bar only
         range_data = strategy_service.calculate_range(opening_bar)
 
-        # Validate range using stock-specific config
+        # Validate range using stock-specific config (or defaults for unknown symbols)
         stock_config = get_stock_config(symbol)
         if not self._validate_range(range_data['range_size_pct'], stock_config):
-            logger.info(f"Range for {symbol} ({range_data['range_size_pct']:.1f}%) outside valid bounds, skipping")
+            logger.info(f"Range for {symbol} ({range_data['range_size_pct']:.1f}%) outside valid bounds "
+                       f"({stock_config['min_range_pct']}-{stock_config['max_range_pct']}%), skipping")
             return None
 
         # Save valid range to database
