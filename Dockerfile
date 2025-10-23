@@ -3,10 +3,13 @@ FROM python:3.12
 
 WORKDIR /app
 
-# Install system dependencies
+# Install all system dependencies in one layer
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 ADD IBJts/source/pythonclient /app/IBJts/source/pythonclient
@@ -29,13 +32,6 @@ RUN pip install -r requirements.txt
 
 # Copy application code
 COPY . .
-
-# Install Node.js for dashboard build
-RUN apt-get update && apt-get install -y \
-    curl \
-    && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs \
-    && rm -rf /var/lib/apt/lists/*
 
 # Build dashboard
 WORKDIR /app/dashboard

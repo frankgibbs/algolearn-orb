@@ -272,11 +272,6 @@ class StocksScannerService:
                 logger.error(f"Error formatting scanner result {i}: {e}")
                 continue
 
-        # Limit to top 25 candidates for ORB strategy
-        if len(formatted_candidates) > 25:
-            logger.info(f"Limiting candidates to top 25 from {len(formatted_candidates)} total")
-            formatted_candidates = formatted_candidates[:25]
-
         logger.info(f"Formatted {len(formatted_candidates)} candidates from scanner results")
         return formatted_candidates
 

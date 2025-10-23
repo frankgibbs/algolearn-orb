@@ -9,11 +9,11 @@ from datetime import datetime, time
 from prettytable import PrettyTable
 
 class CalculateOpeningRangeCommand(Command):
-    """Calculate opening range for selected candidates from pre-market scan based on CONFIG_ORB_TIMEFRAME (15/30/60 mins after market open)"""
+    """Calculate opening range for all candidates from pre-market scan based on CONFIG_ORB_TIMEFRAME (15/30/60 mins after market open)"""
 
     def execute(self, event):
         """
-        Calculate opening range for selected candidates from today's pre-market scan
+        Calculate opening range for all candidates from today's pre-market scan
 
         Args:
             event: Event data (required)
@@ -40,17 +40,17 @@ class CalculateOpeningRangeCommand(Command):
         strategy_service = StocksStrategyService(self.application_context)
         database_manager = StocksDatabaseManager(self.application_context)
 
-        # Get selected candidates from today's pre-market scan
+        # Get all candidates from today's pre-market scan
         today = now.date()
-        candidates = database_manager.get_candidates(today, selected_only=True)
+        candidates = database_manager.get_candidates(today, selected_only=False)
 
         if not candidates:
             raise RuntimeError(
-                "No selected candidates found for today. "
+                "No candidates found for today. "
                 "Run the pre-market scan (/scan) first to identify trading candidates."
             )
 
-        logger.info(f"Calculating {timeframe_minutes}m opening ranges for {len(candidates)} selected candidates")
+        logger.info(f"Calculating {timeframe_minutes}m opening ranges for {len(candidates)} candidates from scan")
 
         # Process each candidate from scan
         valid_ranges = []
@@ -150,7 +150,8 @@ class CalculateOpeningRangeCommand(Command):
         logger.info(f"Opening bar should be at index {opening_bar_index} ({bars_since_open} bars back)")
 
         if opening_bar_index < 0 or opening_bar_index >= len(bars):
-            raise RuntimeError(f"Cannot find opening bar: calculated index {opening_bar_index} out of range (0-{len(bars)-1})")
+            logger.warning(f"Cannot find opening bar for {symbol}: calculated index {opening_bar_index} out of range (0-{len(bars)-1}), skipping")
+            return None
 
         opening_bar = bars.iloc[opening_bar_index:opening_bar_index+1]
         bar_timestamp = opening_bar.iloc[0]['date']
