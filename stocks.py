@@ -83,6 +83,9 @@ class StocksService(IObserver):
         # Option position state transitions every 30 seconds
         schedule.every(30).seconds.do(self.manage_option_positions)
 
+        # PowerOptions position state transitions every 30 seconds
+        schedule.every(30).seconds.do(self.manage_power_options_positions)
+
         # Trailing stop management every minute during market hours
         schedule.every(60).seconds.do(self.move_stop_orders)
 
@@ -150,6 +153,12 @@ class StocksService(IObserver):
         market_open = self.state_manager.getConfigValue(CONFIG_MARKET_OPEN)
         if market_open:
             self.subject.notify({FIELD_TYPE: EVENT_TYPE_MANAGE_OPTION_POSITIONS})
+
+    def manage_power_options_positions(self):
+        """Monitor PowerOptions equity and option position state transitions"""
+        market_open = self.state_manager.getConfigValue(CONFIG_MARKET_OPEN)
+        if market_open:
+            self.subject.notify({FIELD_TYPE: EVENT_TYPE_MANAGE_POWER_OPTIONS_POSITIONS})
 
     def move_stop_orders(self):
         """Handle trailing stop order modifications"""
@@ -281,6 +290,12 @@ def main():
 
     option_analyzer_service = OptionAnalyzerService(application_context)
     application_context.option_analyzer_service = option_analyzer_service
+
+    # Initialize equity database manager for PowerOptions strategy
+    from src.equity.equity_holding_manager import EquityHoldingManager
+
+    equity_db_manager = EquityHoldingManager(application_context)
+    application_context.equity_db_manager = equity_db_manager
 
     # Initialize all other managers
     stocks_service = StocksService(application_context)

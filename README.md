@@ -503,6 +503,175 @@ docker-compose logs orb-stocks | grep ERROR
 docker-compose logs orb-stocks | grep "Position"
 ```
 
+## PowerOptions Portfolio Management Strategy
+
+The system includes a **PowerOptions Portfolio Management** strategy for long-term equity holdings with systematic covered call and ratio spread income generation.
+
+### Strategy Overview
+
+PowerOptions enables income generation from long-term equity holdings through:
+- **Covered Calls**: Selling calls against existing shares
+- **Ratio Spreads**: Selling multiple OTM calls while buying fewer further OTM calls for protection
+- **Basis Reduction**: Premium collected reduces effective stock cost basis
+- **Position Tracking**: Complete lifecycle monitoring for both equity and option positions
+
+### Key Features
+
+1. **Unified Status Flow**: PENDING → OPEN → CLOSED for both equity and options
+2. **Basis Reduction Tracking**: `effective_cost_basis = original_cost_basis - (premium_collected - premium_paid) / shares`
+3. **Assignment Detection**: Monitors IB positions to detect partial/full option assignments
+4. **Expiration Detection**: Automatically detects expired options by querying IB positions
+5. **Premium Accounting**: Tracks both collected and paid premium separately
+
+### Database Schema
+
+#### equity_holdings Table
+```sql
+- id (Primary Key)
+- purchase_order_id (Integer) - IB order ID for stock purchase
+- symbol (String) - Stock symbol
+- total_shares (Integer) - Current shares owned
+- original_cost_basis (Float) - Original purchase price per share
+- premium_collected (Float) - Total premium collected from sold options
+- premium_paid (Float) - Total premium paid for bought options
+- initial_purchase_date (DateTime) - Date of stock purchase
+- status (String) - 'PENDING', 'OPEN', 'CLOSED'
+- exit_date (DateTime) - Date position closed
+- exit_price (Float) - Exit price per share
+- exit_reason (String) - Why position closed
+- realized_pnl (Float) - Total realized P&L
+- created_at (DateTime)
+- updated_at (DateTime)
+```
+
+**Calculated Properties**:
+- `effective_cost_basis`: Cost basis after premium reduction
+- `total_premium_net`: Net premium (collected - paid)
+
+#### option_positions Table (Enhanced)
+```sql
+- equity_holding_id (Foreign Key) - Links to equity_holdings.id
+  (existing fields for strategy_type, legs, status, etc.)
+```
+
+### Workflow Example
+
+#### 1. Purchase Stock
+```python
+# Buy 100 shares of AAPL at $150
+purchase_order = client.place_stock_order("AAPL", "BUY", 100)
+holding = equity_db_manager.create_holding(
+    purchase_order_id=purchase_order.orderId,
+    symbol="AAPL",
+    total_shares=100,
+    original_cost_basis=150.00,
+    initial_purchase_date=datetime.now(pytz.timezone('US/Pacific')),
+    premium_collected=0.0,
+    premium_paid=0.0
+)
+```
+
+#### 2. Sell Covered Calls
+```python
+# Sell 2x Nov 160C @ $3.50, Buy 1x Nov 165C @ $1.50 (ratio spread)
+option_position = option_order_service.place_spread_order(
+    symbol="AAPL",
+    strategy_type="RATIO_CALL_SPREAD",
+    legs=[
+        {"action": "SELL", "strike": 160, "right": "C", "quantity": 2},
+        {"action": "BUY", "strike": 165, "right": "C", "quantity": 1}
+    ],
+    net_credit=5.50,  # ($3.50 * 2) - ($1.50 * 1) = $5.50
+    equity_holding_id=holding.id
+)
+```
+
+#### 3. Position Closes (Premium Added)
+```python
+# Option expires worthless → full premium collected
+equity_db_manager.update_premium(
+    holding_id=holding.id,
+    collected_delta=550.00,  # $5.50 * 100
+    paid_delta=0.0
+)
+
+# New effective basis: $150 - ($550 / 100) = $144.50 per share
+```
+
+#### 4. Assignment Detection
+```python
+# System detects IB shares decreased from 100 to 0 (full assignment)
+equity_db_manager.update_shares(holding.id, new_shares=0)
+equity_db_manager.close_holding(
+    holding_id=holding.id,
+    exit_price=160.00,  # Strike price
+    exit_reason="OPTION_ASSIGNMENT_FULL",
+    realized_pnl=(160.00 - 144.50) * 100  # $1,550
+)
+```
+
+### Position Management
+
+The `ManagePowerOptionsPositionsCommand` runs every 30 seconds during market hours (6:30 AM - 1:00 PM PST) and performs:
+
+1. **Pending Equity Purchases**: Monitors stock orders for fills, transitions to OPEN
+2. **Pending Option Positions**: Monitors option orders for fills, transitions to OPEN
+3. **Closing Option Positions**: Monitors closing orders, updates equity premium when closed
+4. **Expired Options**: Queries IB positions, marks missing options as CLOSED
+5. **Option Assignments**: Compares IB shares to database, detects partial/full assignments
+
+### Premium Tracking Logic
+
+#### Credit Spreads (Net Credit Received)
+```python
+# When closed:
+collected = abs(net_credit) * 100        # Premium received at entry
+paid = abs(exit_value) * 100             # Cost to close (if any)
+equity_db_manager.update_premium(holding_id, collected, paid)
+```
+
+#### Debit Spreads (Net Debit Paid)
+```python
+# When closed:
+collected = abs(exit_value) * 100        # Premium received at exit
+paid = abs(net_credit) * 100             # Cost paid at entry
+equity_db_manager.update_premium(holding_id, collected, paid)
+```
+
+### Architecture Integration
+
+#### Files Created
+- `src/equity/models/equity_holding.py` - EquityHolding model with basis calculation
+- `src/equity/equity_holding_manager.py` - Database operations for equity holdings
+- `src/equity/commands/manage_power_options_positions_command.py` - Lifecycle monitoring
+
+#### Files Modified
+- `src/options/models/option_position.py` - Added equity_holding_id foreign key
+- `src/core/application_context.py` - Added equity_db_manager property
+- `src/core/constants.py` - Added EVENT_TYPE_MANAGE_POWER_OPTIONS_POSITIONS
+- `src/stocks/stocks_trade_manager.py` - Registered ManagePowerOptionsPositionsCommand
+- `stocks.py` - Initialized equity manager, added schedule trigger
+
+#### Database Migration
+```bash
+# Migration already applied: adds equity_holdings table and foreign key
+alembic upgrade head
+```
+
+### Usage Notes
+
+1. **No Configuration Limits**: PowerOptions has no position limits or risk checks (manual management)
+2. **Market Hours**: Same as ORB strategy (6:30 AM - 1:00 PM PST)
+3. **Assignment Handling**: System automatically detects and records assignments
+4. **Premium Tracking**: All premium flows update the equity holding for accurate basis calculation
+5. **Status Consistency**: Both equity and options follow PENDING → OPEN → CLOSED lifecycle
+
+### Monitoring
+
+- **Database**: Query `equity_holdings` and `option_positions` tables
+- **Logs**: `docker-compose logs orb-stocks | grep PowerOptions`
+- **Telegram**: Notifications for position transitions and assignments
+
 ## Support
 
 For questions or issues:

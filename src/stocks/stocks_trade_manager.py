@@ -14,6 +14,7 @@ from src.stocks.commands.time_based_exit_command import TimeBasedExitCommand
 from src.stocks.commands.move_stop_order_command import MoveStopOrderCommand
 from src.stocks.commands.analysis.volume_analysis_command import VolumeAnalysisCommand
 from src.options.commands.manage_option_positions_command import ManageOptionPositionsCommand
+from src.equity.commands.manage_power_options_positions_command import ManagePowerOptionsPositionsCommand
 
 class StocksTradeManager(IObserver):
 
@@ -47,6 +48,9 @@ class StocksTradeManager(IObserver):
 
         # Register option trading commands
         self.command_invoker.register_command(EVENT_TYPE_MANAGE_OPTION_POSITIONS, ManageOptionPositionsCommand(self.application_context))
+
+        # Register PowerOptions strategy commands
+        self.command_invoker.register_command(EVENT_TYPE_MANAGE_POWER_OPTIONS_POSITIONS, ManagePowerOptionsPositionsCommand(self.application_context))
 
     def notify(self, observable, *args):
 

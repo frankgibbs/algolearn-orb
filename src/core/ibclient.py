@@ -22,6 +22,75 @@ from ibapi.order_cancel import OrderCancel
 import pandas as pd
 
 class IBClient(EWrapper, EClient):
+    """
+    Interactive Brokers API Client using thread-safe event pattern.
+
+    DESIGN PATTERN: Thread/Event Synchronization
+    ============================================
+
+    All IB API interactions follow this pattern:
+
+    1. **Instance Variables**: Store data in dictionaries
+       - self.positions = {}  # Position data
+       - self.account_values = {}  # Account summary
+       - self.market_data = {}  # Market quotes
+       - self.orders = {}  # Order tracking
+
+    2. **Threading Events**: Synchronization signals
+       - self.position_received_event = threading.Event()
+       - self.account_values_received_event = threading.Event()
+       - self.market_data_received_event = threading.Event()
+
+    3. **Callbacks**: Populate data and signal completion
+       - position() callback populates self.positions{}
+       - positionEnd() callback sets self.position_received_event
+       - accountSummary() callback populates self.account_values{}
+       - accountSummaryEnd() callback sets self.account_values_received_event
+
+    4. **Public Methods**: Request data and wait for events
+       Example: get_portfolio_positions()
+       ```python
+       def get_portfolio_positions(self, timeout=10):
+           # Clear previous data and event
+           self.position_received_event.clear()
+           self.positions.clear()
+
+           # Request data from IB
+           self.reqPositions()
+
+           # Wait for positionEnd() callback to signal completion
+           if self.position_received_event.wait(timeout=timeout):
+               # Filter and return data
+               return [p for p in self.positions.values() if p['secType'] == 'STK']
+           else:
+               raise TimeoutError("Timeout waiting for positions")
+       ```
+
+    THREADING SAFETY:
+    =================
+    - All callbacks run in IB API thread (managed by ibapi)
+    - Public methods called from main/MCP thread
+    - threading.Event() coordinates between threads
+    - Always clear data + event before new request
+    - Use timeout on all waits to prevent hangs
+
+    ERROR HANDLING:
+    ===============
+    - Raise exceptions for errors, don't return None/False
+    - Use descriptive error messages with context
+    - Let CommandInvoker/MCP layer handle errors
+    - TimeoutError for request timeouts
+    - RuntimeError for IB rejections
+    - ValueError for invalid parameters
+
+    FUTURE REFACTORING GUIDELINES:
+    ==============================
+    - Continue this thread/event pattern for all new IB API integrations
+    - Avoid Observer pattern (self.subject) - deprecated, mostly unused
+    - Don't use silent fallbacks (e.g., config.get(X) or default_value)
+    - Validate all config values explicitly, raise ValueError if missing
+    - Return typed data structures (dicts/lists), not generic events
+    """
 
     def __init__(self, subject : Subject, config):
         EClient.__init__(self, wrapper = self)
@@ -82,11 +151,22 @@ class IBClient(EWrapper, EClient):
         self.contract_details_list = {}
         self.contract_details_list_received_event = threading.Event()
 
+        # Add for equity portfolio positions
+        self.positions = {}
+        self.position_received_event = threading.Event()
+
+        # Add for account summary values
+        self.account_values = {}
+        self.account_values_received_event = threading.Event()
+
         logger.info(config)
 
     def check_connection(self):
         sleep(randint(1,5))
-        self.get_next_order_id()
+        try:
+            self.get_next_order_id()
+        except TimeoutError:
+            logger.warning("Connection check: Timeout waiting for order ID (connection may not be ready)")
     
     def get_next_request_id(self):
         self.requestId += 1
@@ -101,13 +181,16 @@ class IBClient(EWrapper, EClient):
 
         try:
             logger.info(f"connecting to {self.config[CONFIG_HOST]} on port {self.config[CONFIG_PORT]}")
-            self.connect(self.config[CONFIG_HOST], self.config[CONFIG_PORT], self.config[CONFIG_CLIENT_ID])    
+            self.connect(self.config[CONFIG_HOST], self.config[CONFIG_PORT], self.config[CONFIG_CLIENT_ID])
         except Exception as e:
             logger.exception(e)
             return
-        
+
         time.sleep(5)
-        self.get_next_order_id()
+        try:
+            self.get_next_order_id()
+        except TimeoutError:
+            logger.warning("Initial connection: Timeout waiting for order ID (will retry on first order)")
 
         #self.reqAccountUpdates(True, self.config[CONFIG_ACCOUNT])
         #self.reqPositions()
@@ -641,21 +724,79 @@ class IBClient(EWrapper, EClient):
     def accountSummary(self, reqId: int, account: str, tag: str, value: str,
                            currency: str):
         super().accountSummary(reqId, account, tag, value, currency)
-        
-        if tag != "TotalCashBalance": return
 
-        if currency == "BASE":
-            self.pair_balance["USD"] = float(value)
-        else:
-            self.pair_balance[currency] = float(value)
+        # Handle legacy pair_balance tracking for forex
+        if tag == "TotalCashBalance":
+            if currency == "BASE":
+                self.pair_balance["USD"] = float(value)
+            else:
+                self.pair_balance[currency] = float(value)
+
+        # Store account summary values for get_account_value() method
+        try:
+            self.account_values[tag] = float(value)
+        except ValueError:
+            # Non-numeric value, store as string
+            self.account_values[tag] = value
 
     def accountSummaryEnd(self, reqId: int):
         super().accountSummaryEnd(reqId)
-        
+
         self.cancelAccountSummary(reqId)
 
+        # Signal completion for both legacy forex and new account values
         self.pair_balance_received_event.set()
- 
+        self.account_values_received_event.set()
+
+    def get_account_value(self, timeout=10):
+        """
+        Get account summary including total value, cash, equity value, and buying power
+
+        Returns:
+            dict: Account summary with:
+                - total_net_liquidation: Total account value
+                - cash_balance: Available cash
+                - stock_market_value: Value of all stock positions
+                - buying_power: Available for new trades
+
+        Raises:
+            TimeoutError: If request times out
+        """
+        # Clear previous values
+        self.account_values.clear()
+        self.account_values_received_event.clear()
+
+        # Get next request ID
+        request_id = self.get_next_request_id()
+
+        logger.info("Requesting account summary from IB")
+
+        # Request account summary with multiple tags
+        # Tags: NetLiquidation, TotalCashBalance, StockMarketValue, BuyingPower
+        self.reqAccountSummary(
+            request_id,
+            "All",  # All accounts
+            "NetLiquidation,TotalCashBalance,StockMarketValue,BuyingPower"
+        )
+
+        if self.account_values_received_event.wait(timeout=timeout):
+            # Cancel the subscription
+            self.cancelAccountSummary(request_id)
+
+            # Format result
+            result = {
+                'total_net_liquidation': self.account_values.get('NetLiquidation', 0.0),
+                'cash_balance': self.account_values.get('TotalCashBalance', 0.0),
+                'stock_market_value': self.account_values.get('StockMarketValue', 0.0),
+                'buying_power': self.account_values.get('BuyingPower', 0.0)
+            }
+
+            logger.info(f"Account summary received: {result}")
+            return result
+        else:
+            self.cancelAccountSummary(request_id)
+            raise TimeoutError("Timeout waiting for account summary")
+
     def startPnl(self, contract : Contract):
 
         if contract.conId in self.pnl_requests:
@@ -686,24 +827,29 @@ class IBClient(EWrapper, EClient):
     
     def get_next_order_id(self, timeout: int = 10):
         """
-        Get the next valid order ID synchronously using thread event pattern
-        
+        Get the next valid order ID synchronously using thread event pattern.
+        Auto-increments after returning to ensure each call gets a unique ID.
+
         Args:
             timeout: Timeout in seconds
-            
+
         Returns:
-            Next valid order ID or None if timeout
+            Next valid order ID
+
+        Raises:
+            TimeoutError: If request times out
         """
         # Clear the event and request new order IDs
         self.next_order_id_event.clear()
         self.reqIds(-1)
-        
+
         # Wait for the nextValidId callback to set the event
         if self.next_order_id_event.wait(timeout=timeout):
-            return self.next_valid_order_id
+            order_id = self.next_valid_order_id
+            self.next_valid_order_id += 1  # Auto-increment for next call
+            return order_id
         else:
-            logger.info(f"Timeout waiting for next order ID")
-            return None
+            raise TimeoutError("Timeout waiting for next order ID")
     
     def nextValidId(self, orderId: int):
         super().nextValidId(orderId)
@@ -714,23 +860,36 @@ class IBClient(EWrapper, EClient):
 
     def position(self, account: str, contract: Contract, position: Decimal,
                       avgCost: float):
-        
-        super().position(account, contract, position, avgCost)
-        
-        if contract.symbol != self.config[FIELD_SYMBOL]:
-            return
-        
-        logger.info(f"position {position} for {contract.symbol}-{contract.conId} account {account} avgCost {avgCost}" )       
-            
-        """ 
-        event = { FIELD_TYPE: EVENT_TYPE_POSITION_UPDATE,
-                    FIELD_QTY: position,
-                    FIELD_CONTRACT: contract,
-                    FIELD_AVG_PRICE: avgCost}
 
-            self.subject.notify(event)
-            """    
-    
+        super().position(account, contract, position, avgCost)
+
+        # Track ALL positions for portfolio management (get_portfolio_positions, get_option_positions)
+        position_key = f"{contract.symbol}_{contract.conId}"
+        self.positions[position_key] = {
+            'symbol': contract.symbol,
+            'conId': contract.conId,
+            'secType': contract.secType,
+            'quantity': float(position),
+            'avgCost': avgCost,
+            'account': account,
+            'exchange': contract.exchange,
+            'currency': contract.currency
+        }
+
+        # For options, add additional details
+        if contract.secType == 'OPT':
+            self.positions[position_key].update({
+                'strike': contract.strike,
+                'right': contract.right,
+                'expiry': contract.lastTradeDateOrContractMonth
+            })
+
+    def positionEnd(self):
+        """Called when all positions have been received"""
+        super().positionEnd()
+        # Signal that position data is complete
+        self.position_received_event.set()
+
     def tickOptionComputation(self, reqId, tickType , tickAttrib: int, impliedVol: float, delta: float, optPrice: float, pvDividend: float, gamma: float, vega: float, theta: float, undPrice: float):
         
         # Initialize market_data if needed
@@ -1295,6 +1454,41 @@ class IBClient(EWrapper, EClient):
         else:
             raise TimeoutError("Timeout waiting for option positions")
 
+    def get_portfolio_positions(self, timeout=10):
+        """
+        Get all current equity (stock) positions from IB portfolio
+
+        Returns:
+            List of dicts with position info:
+            - symbol: Stock symbol
+            - quantity: Position size (positive for long, negative for short)
+            - avgCost: Average cost per share
+            - marketValue: Current market value of position
+            - unrealizedPNL: Unrealized profit/loss
+            - realizedPNL: Realized profit/loss
+
+        Raises:
+            TimeoutError: If request times out
+        """
+        # Request current positions
+        self.position_received_event.clear()
+        self.positions.clear()
+
+        logger.info("Requesting equity positions from IB")
+        self.reqPositions()
+
+        if self.position_received_event.wait(timeout=timeout):
+            # Filter for stocks only (secType='STK')
+            equity_positions = []
+            for pos in self.positions.values():
+                if pos.get('secType') == 'STK':
+                    equity_positions.append(pos)
+
+            logger.info(f"Found {len(equity_positions)} equity positions")
+            return equity_positions
+        else:
+            raise TimeoutError("Timeout waiting for equity positions")
+
     def get_fundamental_data(self, symbol, report_type="RealtimeRatios", timeout=10):
         """Get fundamental data for a stock"""
         request_id = self.get_next_request_id()
@@ -1528,6 +1722,56 @@ class IBClient(EWrapper, EClient):
             'entry_price': entry_price,
             'stop_price': stop_price
         }
+
+    def place_stock_market_order(self, symbol, action, quantity, timeout=10):
+        """
+        Place a simple market order for stocks (no stops/brackets)
+
+        Args:
+            symbol (str): Stock symbol (e.g., "AAPL")
+            action (str): "BUY" or "SELL"
+            quantity (int): Number of shares
+            timeout (int): Timeout for order submission in seconds
+
+        Returns:
+            dict: Order details including orderId, status, filled info
+
+        Raises:
+            ValueError: If parameters are invalid
+            RuntimeError: If order submission fails or times out
+        """
+        # Validation
+        if not symbol:
+            raise ValueError("symbol is required")
+        if action not in ["BUY", "SELL"]:
+            raise ValueError(f"action must be 'BUY' or 'SELL', got: {action}")
+        if not isinstance(quantity, int) or quantity <= 0:
+            raise ValueError(f"quantity must be a positive integer, got: {quantity}")
+
+        logger.info(f"Placing stock market order: {symbol} {action} {quantity} shares")
+
+        # Get next valid order ID (uses thread/event pattern)
+        order_id = self.get_next_order_id()
+
+        # Create stock contract
+        contract = self.get_stock_contract(symbol)
+
+        # Create market order
+        order = Order()
+        order.orderId = order_id
+        order.action = action
+        order.orderType = "MKT"  # Market order
+        order.totalQuantity = quantity
+        order.transmit = True
+
+        # Submit order with timeout
+        order_result = self.submitOrder(order_id, contract, order, timeout=timeout)
+
+        if not order_result:
+            raise RuntimeError(f"Failed to submit stock order for {symbol}")
+
+        logger.info(f"Stock market order placed: order_id={order_id} | {symbol} {action} {quantity} shares")
+        return order_result
 
     def modify_stop_order(self, order_id, new_stop_price, timeout=10):
         """

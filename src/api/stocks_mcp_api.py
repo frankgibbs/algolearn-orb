@@ -408,6 +408,53 @@ class StocksMcpApi:
                         "required": ["opening_order_id"]
                     }
                 ),
+                Tool(
+                    name="place_stock_order",
+                    description="Place a stock buy or sell order (market order)",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Stock symbol (e.g., AAPL)"
+                            },
+                            "action": {
+                                "type": "string",
+                                "description": "'BUY' or 'SELL'",
+                                "enum": ["BUY", "SELL"]
+                            },
+                            "quantity": {
+                                "type": "integer",
+                                "description": "Number of shares",
+                                "minimum": 1
+                            }
+                        },
+                        "required": ["symbol", "action", "quantity"]
+                    }
+                ),
+                Tool(
+                    name="get_equity_positions",
+                    description="Get current stock positions from IB account",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Optional symbol filter (e.g., AAPL)"
+                            }
+                        },
+                        "required": []
+                    }
+                ),
+                Tool(
+                    name="get_account_summary",
+                    description="Get account value, cash, stock value, and buying power",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                ),
             ]
 
         @self.server.call_tool()
@@ -447,6 +494,12 @@ class StocksMcpApi:
                     return await self._analyze_option_position(arguments or {})
                 elif name == "close_option_position":
                     return await self._close_option_position(arguments or {})
+                elif name == "place_stock_order":
+                    return await self._place_stock_order(arguments or {})
+                elif name == "get_equity_positions":
+                    return await self._get_equity_positions(arguments or {})
+                elif name == "get_account_summary":
+                    return await self._get_account_summary(arguments or {})
                 else:
                     raise ValueError(f"Unknown tool: {name}")
             except Exception as e:
@@ -1150,6 +1203,93 @@ class StocksMcpApi:
             logger.error(f"Error in _close_option_position: {e}")
             return [TextContent(type="text", text=f"Error closing option position: {str(e)}", meta={})]
 
+    async def _place_stock_order(self, args: dict) -> list[TextContent]:
+        """Place a stock buy or sell order"""
+        symbol = args.get("symbol")
+        action = args.get("action")
+        quantity = args.get("quantity")
+
+        # Validate required parameters
+        if not symbol:
+            return [TextContent(type="text", text="Error: symbol is required", meta={})]
+        if not action:
+            return [TextContent(type="text", text="Error: action is required (BUY or SELL)", meta={})]
+        if not quantity or quantity <= 0:
+            return [TextContent(type="text", text="Error: quantity must be a positive integer", meta={})]
+
+        try:
+            # Place order via IBClient
+            order_result = self.application_context.client.place_stock_market_order(
+                symbol=symbol,
+                action=action,
+                quantity=quantity
+            )
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "order_id": order_result.get('orderId'),
+                "symbol": symbol,
+                "action": action,
+                "quantity": quantity,
+                "status": order_result.get('status', 'SUBMITTED'),
+                "message": f"Stock order placed: {action} {quantity} shares of {symbol}"
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _place_stock_order: {e}")
+            return [TextContent(type="text", text=f"Error placing stock order: {str(e)}", meta={})]
+
+    async def _get_equity_positions(self, args: dict) -> list[TextContent]:
+        """Get current equity positions from IB account"""
+        symbol_filter = args.get("symbol")
+
+        try:
+            # Get positions from IB
+            positions = self.application_context.client.get_portfolio_positions()
+
+            # Apply symbol filter if provided
+            if symbol_filter:
+                positions = [p for p in positions if p.get('symbol') == symbol_filter]
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "total_positions": len(positions),
+                "positions": positions,
+                "summary": {
+                    "total_market_value": sum(p.get('marketValue', 0) for p in positions),
+                    "total_unrealized_pnl": sum(p.get('unrealizedPNL', 0) for p in positions),
+                    "unique_symbols": len(set(p.get('symbol') for p in positions))
+                }
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_equity_positions: {e}")
+            return [TextContent(type="text", text=f"Error getting equity positions: {str(e)}", meta={})]
+
+    async def _get_account_summary(self, args: dict) -> list[TextContent]:
+        """Get account summary including value, cash, and buying power"""
+        try:
+            # Get account summary from IB
+            account_summary = self.application_context.client.get_account_value()
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "account_summary": account_summary
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_account_summary: {e}")
+            return [TextContent(type="text", text=f"Error getting account summary: {str(e)}", meta={})]
+
     async def _list_working_orders(self, args: dict) -> list[TextContent]:
         """List all pending/working option orders"""
         from src.options.services.option_order_service import OptionOrderService
@@ -1296,7 +1436,10 @@ class StocksMcpApi:
                     "close_option_position",
                     "list_working_orders",
                     "list_option_positions",
-                    "analyze_option_position"
+                    "analyze_option_position",
+                    "place_stock_order",
+                    "get_equity_positions",
+                    "get_account_summary"
                 ]
             }
 
@@ -1602,6 +1745,37 @@ class StocksMcpApi:
                                         "required": ["opening_order_id"]
                                     }
                                 },
+                                {
+                                    "name": "place_stock_order",
+                                    "description": "Place a stock buy or sell order (market order)",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {"type": "string", "description": "Stock symbol (e.g., AAPL)"},
+                                            "action": {"type": "string", "enum": ["BUY", "SELL"]},
+                                            "quantity": {"type": "integer", "minimum": 1}
+                                        },
+                                        "required": ["symbol", "action", "quantity"]
+                                    }
+                                },
+                                {
+                                    "name": "get_equity_positions",
+                                    "description": "Get current stock positions from IB account",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {"type": "string"}
+                                        }
+                                    }
+                                },
+                                {
+                                    "name": "get_account_summary",
+                                    "description": "Get account value, cash, stock value, and buying power",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {}
+                                    }
+                                },
                             ]
                         }
                     }
@@ -1644,6 +1818,12 @@ class StocksMcpApi:
                         result = await self._analyze_option_position(arguments)
                     elif tool_name == "close_option_position":
                         result = await self._close_option_position(arguments)
+                    elif tool_name == "place_stock_order":
+                        result = await self._place_stock_order(arguments)
+                    elif tool_name == "get_equity_positions":
+                        result = await self._get_equity_positions(arguments)
+                    elif tool_name == "get_account_summary":
+                        result = await self._get_account_summary(arguments)
                     else:
                         return {
                             "jsonrpc": "2.0",

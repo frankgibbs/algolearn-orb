@@ -106,6 +106,9 @@ EVENT_TYPE_END_OF_DAY_EXIT="EVENT_TYPE_END_OF_DAY_EXIT"  # EOD position closure
 # Option trading events
 EVENT_TYPE_MANAGE_OPTION_POSITIONS="EVENT_TYPE_MANAGE_OPTION_POSITIONS"  # Option position state monitoring
 
+# PowerOptions strategy events
+EVENT_TYPE_MANAGE_POWER_OPTIONS_POSITIONS="EVENT_TYPE_MANAGE_POWER_OPTIONS_POSITIONS"  # PowerOptions strategy position monitoring
+
 CONFIG_HOST = "host"
 CONFIG_PORT = "port"
 CONFIG_CLIENT_ID = "client_id"

@@ -5,7 +5,7 @@ Supports vertical spreads, iron condors, butterflies, and other defined-risk str
 Each position can have 2-4 legs tracked in the OptionLeg table.
 """
 
-from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship, validates
 from src import Base
@@ -22,6 +22,9 @@ class OptionPosition(Base):
     closing_order_id = Column(Integer, nullable=False, default=0)  # IB order ID for closing trade (0 = no closing order)
     symbol = Column(String(10), nullable=False)
     strategy_type = Column(String(50), nullable=False)  # "BULL_PUT_SPREAD", "IRON_CONDOR", etc.
+
+    # Link to equity holding (for covered calls/ratio spreads)
+    equity_holding_id = Column(Integer, ForeignKey('equity_holdings.id'), nullable=True)
 
     # Entry details
     entry_date = Column(DateTime, nullable=False)
@@ -56,6 +59,7 @@ class OptionPosition(Base):
 
     # Relationships
     legs = relationship("OptionLeg", back_populates="position", cascade="all, delete-orphan")
+    equity_holding = relationship("EquityHolding", back_populates="option_positions")
 
     @validates('strategy_type')
     def validate_strategy_type(self, key, strategy_type):

@@ -76,6 +76,26 @@ class ApplicationContext:
         self._option_db_manager = option_db_manager
 
     @property
+    def equity_db_manager(self):
+        """
+        Get the equity database manager instance.
+
+        Returns:
+            The equity database manager instance
+        """
+        return self._equity_db_manager
+
+    @equity_db_manager.setter
+    def equity_db_manager(self, equity_db_manager):
+        """
+        Set the equity database manager instance.
+
+        Args:
+            equity_db_manager: The equity database manager instance to set
+        """
+        self._equity_db_manager = equity_db_manager
+
+    @property
     def option_order_service(self):
         """
         Get the option order service instance.
