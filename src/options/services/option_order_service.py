@@ -29,7 +29,8 @@ class OptionOrderService:
         limit_price: float,
         expiration_date: datetime,
         entry_iv: float,
-        time_in_force: str = "DAY"
+        time_in_force: str = "DAY",
+        equity_holding_id: int = None
     ) -> Dict:
         """
         Place a multi-leg spread order
@@ -42,6 +43,7 @@ class OptionOrderService:
             expiration_date: Option expiration datetime (required)
             entry_iv: Implied volatility at entry (required)
             time_in_force: "DAY" or "GTC" (default: "DAY")
+            equity_holding_id: Link to equity holding for covered calls/ratio spreads (optional)
 
         Returns:
             Dict with keys: order_id, status, message, position
@@ -54,8 +56,8 @@ class OptionOrderService:
             raise ValueError("symbol is REQUIRED")
         if not strategy_type:
             raise ValueError("strategy_type is REQUIRED")
-        if not legs or len(legs) < 2:
-            raise ValueError("legs is REQUIRED and must have at least 2 legs")
+        if not legs or len(legs) < 1:
+            raise ValueError("legs is REQUIRED and must have at least 1 leg")
         if limit_price is None:
             raise ValueError("limit_price is REQUIRED")
         if not expiration_date:
@@ -104,7 +106,8 @@ class OptionOrderService:
                 max_profit=max_profit,
                 roi_target=roi_target,
                 entry_iv=entry_iv,
-                legs=legs
+                legs=legs,
+                equity_holding_id=equity_holding_id
             )
 
             logger.info(f"Order placed successfully: {order_id} {symbol} {strategy_type}")

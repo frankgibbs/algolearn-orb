@@ -52,15 +52,12 @@ class OptionAnalyzerService:
             if not position:
                 raise RuntimeError(f"Position not found for order_id {order_id}")
 
-            # Get current market data
-            position_service = self.application_context.option_position_service
-            pnl_info = position_service.update_position_pnl(order_id)
+            # NOTE: P&L calculation removed - should use get_option_quote MCP tool
+            # This service needs refactoring to calculate P&L on-demand
+            raise RuntimeError("OptionAnalyzerService temporarily disabled - use get_option_quote MCP tool for P&L analysis")
 
-            # Calculate key metrics
-            pct_of_max_profit = pnl_info['pct_of_max_profit']
-            dte = position.days_to_expiration
-            unrealized_pnl = pnl_info['unrealized_pnl']
-            roi = pnl_info['actual_roi']
+            # TODO: Refactor to calculate P&L using get_option_quote instead of storing it
+            # dte = position.days_to_expiration
 
             # Get current IV to compare with entry IV
             current_iv = self._get_current_atm_iv(position.symbol)

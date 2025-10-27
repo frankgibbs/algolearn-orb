@@ -629,7 +629,7 @@ class StocksStrategyService:
 
     def get_margin_requirements(self):
         """
-        Get cached margin requirements for all configured stocks
+        Get margin requirements from database
 
         Returns:
             List of dicts with symbol, margin, and metadata for each stock
@@ -637,20 +637,19 @@ class StocksStrategyService:
         Raises:
             RuntimeError: If margin data cannot be retrieved
         """
-        from src.stocks.stocks_config import STOCK_SYMBOLS
-        margin_cache = self.state_manager.get_state(FIELD_STOCK_MARGIN_REQUIREMENTS) or {}
+        # Get all margins from database
+        margins = self.database_manager.get_all_margins()
 
         result = []
-        for symbol in STOCK_SYMBOLS:
-            margin_data = margin_cache.get(symbol, {})
+        for margin in margins:
             result.append({
-                'symbol': symbol,
-                'margin_per_share': margin_data.get('margin', 0),
-                'synthetic': margin_data.get('synthetic', False),
-                'last_updated': margin_data.get('timestamp', 'N/A')
+                'symbol': margin.symbol,
+                'margin_per_share': margin.margin_per_share,
+                'synthetic': margin.synthetic,
+                'last_updated': margin.last_updated.isoformat() if margin.last_updated else 'N/A'
             })
 
-        logger.debug(f"Retrieved margin requirements for {len(result)} stocks")
+        logger.debug(f"Retrieved margin requirements for {len(result)} stocks from database")
         return result
 
     # Telegram command support methods

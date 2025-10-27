@@ -12,6 +12,7 @@ from src.stocks.models.opening_range import OpeningRange
 from src.stocks.models.position import Position
 from src.stocks.models.stock_candidate import StockCandidate
 from src.stocks.models.trade_decision import TradeDecision
+from src.stocks.models.stock_margin import StockMargin
 # Import core trade model for stock trades
 from src.core.trade import Trade
 
@@ -579,5 +580,147 @@ class StocksDatabaseManager(IObserver):
 
             return query.order_by(Position.created_at.desc()).all()
 
+        finally:
+            session.close()
+
+    # ==================== StockMargin operations ====================
+
+    def get_margin(self, symbol: str):
+        """
+        Get margin requirement for a specific symbol
+
+        Args:
+            symbol: Stock symbol (required)
+
+        Returns:
+            StockMargin object or None if not found
+
+        Raises:
+            ValueError: If symbol is invalid
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+
+        session = self.get_session()
+        try:
+            margin = session.query(StockMargin).filter_by(symbol=symbol).first()
+            return margin
+        finally:
+            session.close()
+
+    def save_margin(self, symbol: str, margin_per_share: float, synthetic: bool = False):
+        """
+        Save or update margin requirement for a symbol
+
+        Args:
+            symbol: Stock symbol (required)
+            margin_per_share: Margin required per share (required)
+            synthetic: Whether this is a synthetic (calculated) margin (default: False)
+
+        Raises:
+            ValueError: If parameters are invalid
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+        if margin_per_share is None or margin_per_share <= 0:
+            raise ValueError("margin_per_share is REQUIRED and must be > 0")
+
+        session = self.get_session()
+        try:
+            # Check if margin already exists
+            existing = session.query(StockMargin).filter_by(symbol=symbol).first()
+
+            if existing:
+                # Update existing margin
+                existing.margin_per_share = margin_per_share
+                existing.synthetic = synthetic
+                existing.last_updated = datetime.now()
+                logger.debug(f"Updated margin for {symbol}: ${margin_per_share:.2f} (synthetic={synthetic})")
+            else:
+                # Create new margin entry
+                margin = StockMargin(
+                    symbol=symbol,
+                    margin_per_share=margin_per_share,
+                    synthetic=synthetic
+                )
+                session.add(margin)
+                logger.debug(f"Created margin for {symbol}: ${margin_per_share:.2f} (synthetic={synthetic})")
+
+            session.commit()
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error saving margin for {symbol}: {e}")
+            raise
+        finally:
+            session.close()
+
+    def get_all_margins(self):
+        """
+        Get all margin requirements
+
+        Returns:
+            List of StockMargin objects
+        """
+        session = self.get_session()
+        try:
+            margins = session.query(StockMargin).order_by(StockMargin.symbol).all()
+            return margins
+        finally:
+            session.close()
+
+    def get_stale_margins(self, hours: int = 24):
+        """
+        Get margins that haven't been updated in N hours
+
+        Args:
+            hours: Number of hours to consider stale (default: 24)
+
+        Returns:
+            List of StockMargin objects that are stale
+
+        Raises:
+            ValueError: If hours is invalid
+        """
+        if hours is None or hours < 0:
+            raise ValueError("hours must be >= 0")
+
+        session = self.get_session()
+        try:
+            from datetime import timedelta
+            cutoff_time = datetime.now() - timedelta(hours=hours)
+
+            stale_margins = session.query(StockMargin).filter(
+                StockMargin.last_updated < cutoff_time
+            ).all()
+
+            return stale_margins
+        finally:
+            session.close()
+
+    def delete_margin(self, symbol: str):
+        """
+        Delete margin requirement for a symbol
+
+        Args:
+            symbol: Stock symbol (required)
+
+        Raises:
+            ValueError: If symbol is invalid
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+
+        session = self.get_session()
+        try:
+            margin = session.query(StockMargin).filter_by(symbol=symbol).first()
+            if margin:
+                session.delete(margin)
+                session.commit()
+                logger.debug(f"Deleted margin for {symbol}")
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error deleting margin for {symbol}: {e}")
+            raise
         finally:
             session.close()

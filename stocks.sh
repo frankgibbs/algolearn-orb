@@ -2,6 +2,10 @@
 # Stock Trading Service Launch Script - ORB Strategy
 # NO DEFAULTS - all parameters required
 
+# Run database migrations
+echo "Running database migrations..."
+alembic upgrade head
+
 python stocks.py \
   --host $HOST \
   --port $PORT \

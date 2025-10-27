@@ -7,7 +7,6 @@ from src.stocks.commands.calculate_opening_range_command import CalculateOpening
 from src.stocks.commands.open_position_command import OpenPositionCommand
 from src.stocks.commands.manage_stock_positions_command import ManageStockPositionsCommand
 from src.stocks.commands.stocks_connection_manager import StocksConnectionManager
-from src.stocks.commands.calculate_stock_margin_requirements_command import CalculateStockMarginRequirementsCommand
 from src.stocks.commands.strategies.orb_signal_command import ORBSignalCommand
 from src.stocks.commands.end_of_day_exit_command import EndOfDayExitCommand
 from src.stocks.commands.time_based_exit_command import TimeBasedExitCommand
@@ -36,7 +35,6 @@ class StocksTradeManager(IObserver):
         self.command_invoker.register_command(EVENT_TYPE_MANAGE_STOCK_POSITIONS, ManageStockPositionsCommand(self.application_context))
         self.command_invoker.register_command(EVENT_TYPE_CLOSE_ALL_STOCK_POSITIONS, ManageStockPositionsCommand(self.application_context))
         self.command_invoker.register_command(EVENT_TYPE_STOCKS_CONNECTION_CHECK, StocksConnectionManager(self.application_context))
-        self.command_invoker.register_command(EVENT_TYPE_CALCULATE_STOCK_MARGINS, CalculateStockMarginRequirementsCommand(self.application_context))
 
         # Register position management commands
         self.command_invoker.register_command(EVENT_TYPE_END_OF_DAY_EXIT, EndOfDayExitCommand(self.application_context))

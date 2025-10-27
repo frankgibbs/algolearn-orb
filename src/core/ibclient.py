@@ -1325,12 +1325,50 @@ class IBClient(EWrapper, EClient):
         """
         if not symbol:
             raise ValueError("symbol is REQUIRED")
-        if not legs or len(legs) < 2:
-            raise ValueError("legs is REQUIRED and must have at least 2 legs")
+        if not legs or len(legs) < 1:
+            raise ValueError("legs is REQUIRED and must have at least 1 leg")
         if limit_price is None:
             raise ValueError("limit_price is REQUIRED")
 
-        # Create BAG contract for combo order
+        # Handle single-leg options (SHORT_CALL, SHORT_PUT, LONG_CALL, LONG_PUT)
+        if len(legs) == 1:
+            leg_data = legs[0]
+
+            # Validate leg data
+            if "action" not in leg_data or "strike" not in leg_data or "right" not in leg_data or "expiry" not in leg_data:
+                raise ValueError("Each leg must have: action, strike, right, expiry")
+
+            # Create option contract (OPT, not BAG)
+            opt_contract = self.get_option_contract(
+                symbol=symbol,
+                expiry=leg_data["expiry"],
+                strike=leg_data["strike"],
+                right=leg_data["right"]
+            )
+
+            # Create limit order
+            order = Order()
+            order.action = leg_data["action"]  # Use leg's action (SELL for covered call)
+            order.orderType = "LMT"
+            order.totalQuantity = leg_data.get("quantity", 1)
+            order.lmtPrice = limit_price
+            order.tif = time_in_force
+            order.transmit = True
+
+            # Submit the single option order
+            order_id = self.get_next_order_id()
+            if not order_id:
+                raise RuntimeError("Could not get next order ID")
+
+            logger.info(f"Placing single option order {order_id} for {symbol}: {leg_data['action']} {leg_data['strike']}{leg_data['right']} @ ${limit_price:.2f}")
+
+            result = self.submitOrder(order_id, opt_contract, order, timeout)
+            if result:
+                return result
+            else:
+                raise RuntimeError(f"Single option order submission failed for {symbol}")
+
+        # Multi-leg: Create BAG contract for combo order
         combo_contract = Contract()
         combo_contract.symbol = symbol
         combo_contract.secType = "BAG"

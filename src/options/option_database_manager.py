@@ -54,7 +54,8 @@ class OptionDatabaseManager:
         max_profit: float,
         roi_target: float,
         entry_iv: float,
-        legs: List[Dict]
+        legs: List[Dict],
+        equity_holding_id: int = None
     ) -> OptionPosition:
         """
         Save a new option position with its legs to database
@@ -72,6 +73,7 @@ class OptionDatabaseManager:
             roi_target: Expected ROI percentage (required)
             entry_iv: Implied volatility at entry (required)
             legs: List of leg dicts with keys: action, strike, right, expiry, quantity (required)
+            equity_holding_id: Link to equity holding for covered calls/ratio spreads (optional)
 
         Returns:
             OptionPosition object
@@ -97,8 +99,8 @@ class OptionDatabaseManager:
             raise ValueError("max_risk is REQUIRED and must be > 0")
         if max_profit is None or max_profit <= 0:
             raise ValueError("max_profit is REQUIRED and must be > 0")
-        if not legs or len(legs) < 2:
-            raise ValueError("legs is REQUIRED and must have at least 2 legs")
+        if not legs or len(legs) < 1:
+            raise ValueError("legs is REQUIRED and must have at least 1 leg")
 
         session = self.get_session()
         try:
@@ -121,6 +123,7 @@ class OptionDatabaseManager:
                 max_profit=max_profit,
                 roi_target=roi_target,
                 entry_iv=entry_iv,
+                equity_holding_id=equity_holding_id,
                 status="PENDING"
             )
 
@@ -188,52 +191,8 @@ class OptionDatabaseManager:
         finally:
             session.close()
 
-    def update_position_pnl(self, order_id: int, current_value: float, unrealized_pnl: float):
-        """
-        Update position with current market value and P&L
-
-        Args:
-            order_id: Position ID (required)
-            current_value: Current mid price of spread (required)
-            unrealized_pnl: Current unrealized profit/loss (required)
-
-        Raises:
-            ValueError: If parameters are invalid
-            RuntimeError: If position not found
-        """
-        if not order_id:
-            raise ValueError("order_id is REQUIRED")
-        if current_value is None:
-            raise ValueError("current_value is REQUIRED")
-        if unrealized_pnl is None:
-            raise ValueError("unrealized_pnl is REQUIRED")
-
-        session = self.get_session()
-        try:
-            position = session.query(OptionPosition).filter_by(id=order_id).first()
-            if not position:
-                raise RuntimeError(f"Option position not found for order_id {order_id}")
-
-            position.current_value = current_value
-            position.unrealized_pnl = unrealized_pnl
-            position.updated_at = datetime.now()
-
-            # Check if profit target hit (50-75% of max profit)
-            pct_profit = (unrealized_pnl / position.max_profit * 100) if position.max_profit > 0 else 0
-            position.profit_target_hit = pct_profit >= 50
-
-            # Check if needs management (< 21 DTE or near breakeven)
-            position.needs_management = position.days_to_expiration <= 21
-
-            session.commit()
-            logger.debug(f"Position {order_id} P&L updated: ${unrealized_pnl:.2f} ({pct_profit:.1f}% of max)")
-
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Error updating position P&L: {e}")
-            raise
-        finally:
-            session.close()
+    # NOTE: update_position_pnl() removed - unrealized P&L calculated on-demand
+    # Use get_option_quote MCP tool to fetch real-time prices when needed
 
     def set_closing_order(self, opening_order_id: int, closing_order_id: int, exit_reason: str):
         """

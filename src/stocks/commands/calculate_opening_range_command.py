@@ -182,6 +182,9 @@ class CalculateOpeningRangeCommand(Command):
                    f"${range_data['range_low']:.2f}-${range_data['range_high']:.2f} "
                    f"({range_data['range_size_pct']:.1f}%)")
 
+        # Update margin for this symbol (on-demand calculation)
+        self._update_margin_for_symbol(symbol)
+
         return {
             'symbol': symbol,
             'range_size_pct': range_data['range_size_pct']
@@ -210,6 +213,57 @@ class CalculateOpeningRangeCommand(Command):
         max_pct = stock_config['max_range_pct']
 
         return min_pct <= range_size_pct <= max_pct
+
+    def _update_margin_for_symbol(self, symbol):
+        """
+        Update margin requirement for a symbol if missing or stale
+
+        Fetches margin from IB and saves to database. Skips if fresh margin exists (< 24 hours old).
+
+        Args:
+            symbol: Stock symbol (required)
+
+        Raises:
+            ValueError: If symbol is invalid
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+
+        try:
+            # Check if margin exists and is fresh
+            margin_data = self.database_manager.get_margin(symbol)
+
+            if margin_data:
+                # Check if margin is stale (older than 24 hours)
+                from datetime import datetime, timedelta
+                age_hours = (datetime.now() - margin_data.last_updated).total_seconds() / 3600
+
+                if age_hours < 24:
+                    logger.debug(f"Margin for {symbol} is fresh ({age_hours:.1f}h old), skipping update")
+                    return
+
+                logger.info(f"Margin for {symbol} is stale ({age_hours:.1f}h old), updating...")
+
+            # Fetch fresh margin from IB
+            try:
+                margin_per_share = self.client.get_margin_per_share(symbol)
+
+                # Save to database
+                self.database_manager.save_margin(
+                    symbol=symbol,
+                    margin_per_share=margin_per_share,
+                    synthetic=False
+                )
+
+                logger.info(f"Updated margin for {symbol}: ${margin_per_share:.2f}/share")
+
+            except Exception as e:
+                logger.warning(f"Could not fetch margin for {symbol} from IB: {e}")
+                # Don't raise - margin update is best-effort during opening range calculation
+
+        except Exception as e:
+            logger.warning(f"Error updating margin for {symbol}: {e}")
+            # Don't raise - margin update shouldn't block opening range calculation
 
     def _send_notification(self, valid_ranges, strategy_service):
         """

@@ -279,7 +279,10 @@ class StocksMcpApi:
                 ),
                 Tool(
                     name="place_options_spread",
-                    description="Place a multi-leg option spread order (vertical spreads, iron condors, etc.)",
+                    description="Place option orders (single-leg or multi-leg spreads). "
+                                "Single-leg: SHORT_CALL, SHORT_PUT, LONG_CALL, LONG_PUT. "
+                                "Multi-leg: BULL_PUT_SPREAD, BEAR_CALL_SPREAD, IRON_CONDOR, etc. "
+                                "For PowerOptions covered calls, use SHORT_CALL with equity_holding_id.",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -289,8 +292,9 @@ class StocksMcpApi:
                             },
                             "strategy_type": {
                                 "type": "string",
-                                "description": "Strategy name (e.g., BULL_PUT_SPREAD, BEAR_CALL_SPREAD, IRON_CONDOR)",
-                                "enum": ["BULL_PUT_SPREAD", "BEAR_CALL_SPREAD", "IRON_CONDOR", "IRON_BUTTERFLY"]
+                                "description": "Strategy name",
+                                "enum": ["SHORT_CALL", "SHORT_PUT", "LONG_CALL", "LONG_PUT",
+                                        "BULL_PUT_SPREAD", "BEAR_CALL_SPREAD", "IRON_CONDOR", "IRON_BUTTERFLY"]
                             },
                             "legs": {
                                 "type": "array",
@@ -324,6 +328,10 @@ class StocksMcpApi:
                                 "description": "Order time in force",
                                 "enum": ["DAY", "GTC"],
                                 "default": "DAY"
+                            },
+                            "equity_holding_id": {
+                                "type": "integer",
+                                "description": "Link to equity holding for covered calls/ratio spreads (PowerOptions strategy)"
                             }
                         },
                         "required": ["symbol", "strategy_type", "legs", "limit_price", "expiration_date", "entry_iv"]
@@ -410,7 +418,9 @@ class StocksMcpApi:
                 ),
                 Tool(
                     name="place_stock_order",
-                    description="Place a stock buy or sell order (market order)",
+                    description="Place a stock buy or sell order (market order). "
+                                "For BUY orders, automatically creates equity_holding record for PowerOptions tracking "
+                                "(long-term holding with covered calls). ManagePowerOptionsPositionsCommand monitors for fill.",
                     inputSchema={
                         "type": "object",
                         "properties": {
@@ -425,7 +435,7 @@ class StocksMcpApi:
                             },
                             "quantity": {
                                 "type": "integer",
-                                "description": "Number of shares",
+                                "description": "Number of shares (recommend 100+ for covered calls)",
                                 "minimum": 1
                             }
                         },
@@ -441,6 +451,25 @@ class StocksMcpApi:
                             "symbol": {
                                 "type": "string",
                                 "description": "Optional symbol filter (e.g., AAPL)"
+                            }
+                        },
+                        "required": []
+                    }
+                ),
+                Tool(
+                    name="get_equity_holdings",
+                    description="Get PowerOptions equity holdings from database (long-term stock positions with covered calls)",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Optional symbol filter (e.g., AAPL)"
+                            },
+                            "status": {
+                                "type": "string",
+                                "description": "Optional status filter: OPEN, CLOSED, PENDING",
+                                "enum": ["OPEN", "CLOSED", "PENDING"]
                             }
                         },
                         "required": []
@@ -498,6 +527,8 @@ class StocksMcpApi:
                     return await self._place_stock_order(arguments or {})
                 elif name == "get_equity_positions":
                     return await self._get_equity_positions(arguments or {})
+                elif name == "get_equity_holdings":
+                    return await self._get_equity_holdings(arguments or {})
                 elif name == "get_account_summary":
                     return await self._get_account_summary(arguments or {})
                 else:
@@ -1078,14 +1109,15 @@ class StocksMcpApi:
         expiration_date_str = args.get("expiration_date")
         entry_iv = args.get("entry_iv")
         time_in_force = args.get("time_in_force", "DAY")
+        equity_holding_id = args.get("equity_holding_id")
 
         # Validate required parameters
         if not symbol:
             return [TextContent(type="text", text="Error: symbol is required", meta={})]
         if not strategy_type:
             return [TextContent(type="text", text="Error: strategy_type is required", meta={})]
-        if not legs or len(legs) < 2:
-            return [TextContent(type="text", text="Error: legs is required and must have at least 2 legs", meta={})]
+        if not legs or len(legs) < 1:
+            return [TextContent(type="text", text="Error: legs is required and must have at least 1 leg", meta={})]
         if limit_price is None:
             return [TextContent(type="text", text="Error: limit_price is required", meta={})]
         if not expiration_date_str:
@@ -1108,7 +1140,8 @@ class StocksMcpApi:
                 limit_price=limit_price,
                 expiration_date=expiration_date,
                 entry_iv=entry_iv,
-                time_in_force=time_in_force
+                time_in_force=time_in_force,
+                equity_holding_id=equity_holding_id
             )
 
             # Format result
@@ -1126,6 +1159,11 @@ class StocksMcpApi:
                 "limit_price": limit_price,
                 "time_in_force": time_in_force
             }
+
+            # Add equity_holding_id if provided
+            if equity_holding_id:
+                result["equity_holding_id"] = equity_holding_id
+                result["message"] += f" (linked to equity_holding_id={equity_holding_id})"
 
             return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
 
@@ -1204,7 +1242,7 @@ class StocksMcpApi:
             return [TextContent(type="text", text=f"Error closing option position: {str(e)}", meta={})]
 
     async def _place_stock_order(self, args: dict) -> list[TextContent]:
-        """Place a stock buy or sell order"""
+        """Place a stock buy or sell order (creates equity_holding for BUY orders)"""
         symbol = args.get("symbol")
         action = args.get("action")
         quantity = args.get("quantity")
@@ -1218,23 +1256,61 @@ class StocksMcpApi:
             return [TextContent(type="text", text="Error: quantity must be a positive integer", meta={})]
 
         try:
-            # Place order via IBClient
+            # STEP 1: Place order via IBClient
             order_result = self.application_context.client.place_stock_market_order(
                 symbol=symbol,
                 action=action,
                 quantity=quantity
             )
 
+            order_id = order_result.get('orderId')
+
+            # STEP 2: If BUY, create equity_holding record for PowerOptions tracking
+            equity_holding_id = None
+            if action == "BUY":
+                # Get current market price for cost basis estimate
+                try:
+                    estimated_price = self.application_context.client.get_stock_price(symbol)
+                except Exception as e:
+                    logger.warning(f"Could not get stock price for {symbol}: {e}")
+                    estimated_price = 0.0  # Will be updated on fill
+
+                # Create equity holding record
+                equity_db_manager = self.application_context.equity_db_manager
+                holding = equity_db_manager.create_holding(
+                    purchase_order_id=order_id,
+                    symbol=symbol,
+                    total_shares=quantity,
+                    original_cost_basis=estimated_price,
+                    initial_purchase_date=datetime.now()
+                )
+                equity_holding_id = holding.id
+
+                logger.info(
+                    f"Created equity_holding {equity_holding_id}: "
+                    f"{symbol} {quantity} shares @ ${estimated_price:.2f} (PENDING)"
+                )
+
             # Format result
             result = {
                 "timestamp": datetime.now().isoformat(),
-                "order_id": order_result.get('orderId'),
+                "order_id": order_id,
                 "symbol": symbol,
                 "action": action,
                 "quantity": quantity,
-                "status": order_result.get('status', 'SUBMITTED'),
-                "message": f"Stock order placed: {action} {quantity} shares of {symbol}"
+                "status": order_result.get('status', 'SUBMITTED')
             }
+
+            if equity_holding_id:
+                result["equity_holding_id"] = equity_holding_id
+                result["equity_status"] = "PENDING"
+                result["message"] = (
+                    f"Stock purchase order placed: BUY {quantity} shares of {symbol}. "
+                    f"Equity holding created (id={equity_holding_id}). "
+                    f"Will transition to OPEN when filled."
+                )
+            else:
+                result["message"] = f"Stock order placed: {action} {quantity} shares of {symbol}"
 
             return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
 
@@ -1271,6 +1347,56 @@ class StocksMcpApi:
         except Exception as e:
             logger.error(f"Error in _get_equity_positions: {e}")
             return [TextContent(type="text", text=f"Error getting equity positions: {str(e)}", meta={})]
+
+    async def _get_equity_holdings(self, args: dict) -> list[TextContent]:
+        """Get PowerOptions equity holdings from database"""
+        from src.equity.services.equity_service import EquityService
+
+        symbol_filter = args.get("symbol")
+        status_filter = args.get("status")
+
+        try:
+            # Initialize equity service
+            equity_service = EquityService(self.application_context)
+
+            # Get holdings with filters
+            holdings = equity_service.get_all_holdings(
+                symbol=symbol_filter,
+                status=status_filter
+            )
+
+            # Format holdings
+            holdings_data = []
+            for holding in holdings:
+                holding_data = {
+                    "holding_id": holding.id,
+                    "symbol": holding.symbol,
+                    "status": holding.status,
+                    "total_shares": holding.total_shares,
+                    "original_cost_basis": holding.original_cost_basis,
+                    "purchase_order_id": holding.purchase_order_id,
+                    "initial_purchase_date": holding.initial_purchase_date.isoformat() if holding.initial_purchase_date else None,
+                    "created_at": holding.created_at.isoformat() if holding.created_at else None,
+                    "updated_at": holding.updated_at.isoformat() if holding.updated_at else None
+                }
+                holdings_data.append(holding_data)
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "total_holdings": len(holdings_data),
+                "holdings": holdings_data,
+                "filters": {
+                    "symbol": symbol_filter,
+                    "status": status_filter
+                }
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_equity_holdings: {e}")
+            return [TextContent(type="text", text=f"Error getting equity holdings: {str(e)}", meta={})]
 
     async def _get_account_summary(self, args: dict) -> list[TextContent]:
         """Get account summary including value, cash, and buying power"""

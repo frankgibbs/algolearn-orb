@@ -26,10 +26,8 @@ class EquityHolding(Base):
     original_cost_basis = Column(Float, nullable=False)  # Cost per share when purchased
     initial_purchase_date = Column(DateTime, nullable=False)
 
-    # Premium tracking (for basis reduction)
-    # NOTE: These are required fields with NO defaults - must be explicitly initialized
-    premium_collected = Column(Float, nullable=False)  # Total option premium collected
-    premium_paid = Column(Float, nullable=False)  # Total option premium paid (buying back)
+    # NOTE: Premium tracking removed - calculated on-demand via EquityService
+    # using real-time data from linked option_positions
 
     # Status tracking (consistent with other position types)
     status = Column(String(20), nullable=False)  # "PENDING", "OPEN", "CLOSED"
@@ -55,34 +53,9 @@ class EquityHolding(Base):
             raise ValueError(f"Status must be one of {valid_statuses}, got '{status}'")
         return status
 
-    @property
-    def effective_cost_basis(self):
-        """
-        Calculate effective cost basis per share after premium collected/paid.
-
-        This is the PowerOptions "basis reduction" - option premium lowers your cost basis.
-
-        Returns:
-            Float: Effective cost per share after accounting for option premium
-        """
-        if self.total_shares == 0:
-            return 0.0
-
-        net_premium = self.premium_collected - self.premium_paid
-        total_stock_cost = self.original_cost_basis * self.total_shares
-        effective_total = total_stock_cost - net_premium
-
-        return effective_total / self.total_shares
-
-    @property
-    def total_premium_net(self):
-        """
-        Calculate net premium collected (positive) or paid (negative)
-
-        Returns:
-            Float: Net premium (collected - paid)
-        """
-        return self.premium_collected - self.premium_paid
+    # NOTE: effective_cost_basis and total_premium_net removed
+    # Use EquityService.calculate_effective_cost_basis() for real-time calculation
+    # with live IB data for open option positions
 
     @property
     def is_pending(self):
@@ -102,6 +75,4 @@ class EquityHolding(Base):
     def __repr__(self):
         return f"<EquityHolding(id={self.id}, symbol='{self.symbol}', " \
                f"shares={self.total_shares}, status='{self.status}', " \
-               f"original_basis=${self.original_cost_basis:.2f}, " \
-               f"effective_basis=${self.effective_cost_basis:.2f}, " \
-               f"net_premium=${self.total_premium_net:.2f})>"
+               f"original_basis=${self.original_cost_basis:.2f})>"

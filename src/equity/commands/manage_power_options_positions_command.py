@@ -140,11 +140,11 @@ class ManagePowerOptionsPositionsCommand(Command):
 
         # Send notification
         self.state_manager.sendTelegramMessage(
-            f"✅ Stock Purchase FILLED\\n"
-            f"Symbol: {holding.symbol}\\n"
-            f"Shares: {holding.total_shares}\\n"
-            f"Fill Price: ${fill_price:.2f}\\n"
-            f"Total Cost: ${fill_price * holding.total_shares:.2f}\\n"
+            f"✅ Stock Purchase FILLED\n"
+            f"Symbol: {holding.symbol}\n"
+            f"Shares: {holding.total_shares}\n"
+            f"Fill Price: ${fill_price:.2f}\n"
+            f"Total Cost: ${fill_price * holding.total_shares:.2f}\n"
             f"Order ID: {holding.purchase_order_id}"
         )
 
@@ -227,7 +227,7 @@ class ManagePowerOptionsPositionsCommand(Command):
         )
 
         # Build leg details for notification
-        legs_text = "\\n".join([
+        legs_text = "\n".join([
             f"  {leg.action} {leg.quantity}x {leg.strike}{leg.right}"
             for leg in position.legs
         ])
@@ -237,15 +237,15 @@ class ManagePowerOptionsPositionsCommand(Command):
 
         # Send detailed notification
         message = (
-            f"✅ Option Position FILLED\\n"
-            f"Symbol: {position.symbol}\\n"
-            f"Strategy: {position.strategy_type}\\n"
-            f"Fill Price: ${fill_price:.2f}\\n"
-            f"Max Profit: ${position.max_profit:.2f}\\n"
-            f"Max Risk: ${position.max_risk:.2f}\\n"
-            f"ROI Target: {roi_target:.1f}%\\n"
-            f"DTE: {position.days_to_expiration}\\n"
-            f"Legs:\\n{legs_text}\\n"
+            f"✅ Option Position FILLED\n"
+            f"Symbol: {position.symbol}\n"
+            f"Strategy: {position.strategy_type}\n"
+            f"Fill Price: ${fill_price:.2f}\n"
+            f"Max Profit: ${position.max_profit:.2f}\n"
+            f"Max Risk: ${position.max_risk:.2f}\n"
+            f"ROI Target: {roi_target:.1f}%\n"
+            f"DTE: {position.days_to_expiration}\n"
+            f"Legs:\n{legs_text}\n"
             f"Order ID: {position.id}"
         )
 
@@ -254,7 +254,7 @@ class ManagePowerOptionsPositionsCommand(Command):
             equity_db_manager = self.application_context.equity_db_manager
             equity_holding = equity_db_manager.get_holding_by_id(position.equity_holding_id)
             if equity_holding:
-                message += f"\\nLinked to equity holding: {equity_holding.symbol} ({equity_holding.total_shares} shares)"
+                message += f"\nLinked to equity holding: {equity_holding.symbol} ({equity_holding.total_shares} shares)"
 
         self.state_manager.sendTelegramMessage(message)
         logger.info(f"Fill notification sent for option position {position.id}")
@@ -360,13 +360,13 @@ class ManagePowerOptionsPositionsCommand(Command):
         # Send notification
         pnl_emoji = "✅" if realized_pnl > 0 else "❌"
         message = (
-            f"{pnl_emoji} Option Position CLOSED\\n"
-            f"Symbol: {position.symbol}\\n"
-            f"Strategy: {position.strategy_type}\\n"
-            f"Exit Price: ${exit_value:.2f}\\n"
-            f"Realized P&L: ${realized_pnl:.2f}\\n"
-            f"Actual ROI: {actual_roi:.1f}%\\n"
-            f"Exit Reason: {position.exit_reason or 'MANUAL_CLOSE'}\\n"
+            f"{pnl_emoji} Option Position CLOSED\n"
+            f"Symbol: {position.symbol}\n"
+            f"Strategy: {position.strategy_type}\n"
+            f"Exit Price: ${exit_value:.2f}\n"
+            f"Realized P&L: ${realized_pnl:.2f}\n"
+            f"Actual ROI: {actual_roi:.1f}%\n"
+            f"Exit Reason: {position.exit_reason or 'MANUAL_CLOSE'}\n"
             f"Position ID: {position.id}"
         )
 
@@ -398,30 +398,15 @@ class ManagePowerOptionsPositionsCommand(Command):
             )
             return
 
-        # Calculate net premium for this option trade
-        if option_position.is_credit_spread:
-            # Sold for credit, bought back for debit
-            collected = option_position.net_credit * 100
-            paid = exit_value * 100
-        else:
-            # Bought for debit, sold for credit
-            collected = exit_value * 100
-            paid = abs(option_position.net_credit) * 100
-
-        # Update equity holding totals
-        equity_db_manager.update_premium(
-            holding_id=equity_holding.id,
-            collected_delta=collected,
-            paid_delta=paid
-        )
-
+        # NOTE: Premium tracking removed - calculated on-demand via EquityService
+        # The realized_pnl in option_position is sufficient for cost basis calculation
         logger.info(
-            f"Updated {equity_holding.symbol} premium: "
-            f"+${collected:.2f} collected, -${paid:.2f} paid"
+            f"Option position {option_position.id} closed for {equity_holding.symbol} - "
+            f"premium will be included in next cost basis calculation"
         )
 
     def _check_expired_options(self):
-        """Check for expired options by querying IB positions (expired = missing from IB)"""
+        """Check for expired options by comparing expiration date to current time"""
         # Query all OPEN option positions
         option_db_manager = self.application_context.option_db_manager
         open_positions = option_db_manager.get_open_positions()
@@ -433,22 +418,17 @@ class ManagePowerOptionsPositionsCommand(Command):
             logger.debug("No open options without closing orders to check for expiration")
             return
 
-        logger.debug(f"Checking {len(open_no_closing)} open options for expiration via IB positions")
+        logger.debug(f"Checking {len(open_no_closing)} open options for expiration by date")
 
-        # Query IB for current option positions
-        try:
-            ib_option_positions = self.client.list_option_positions()
-            ib_position_ids = {pos.get('orderId') for pos in ib_option_positions if pos.get('orderId')}
-        except Exception as e:
-            logger.warning(f"Could not query IB option positions: {e}")
-            return
+        # Get current time for comparison
+        now = datetime.now()
 
-        # Check each open position - if missing from IB, it expired
+        # Check each open position - if past expiration date, it expired
         for position in open_no_closing:
-            if position.id not in ib_position_ids:
+            if position.expiration_date and position.expiration_date < now:
                 logger.info(
                     f"Option position {position.id} ({position.symbol} {position.strategy_type}) "
-                    f"missing from IB - marking as EXPIRED_WORTHLESS"
+                    f"expired on {position.expiration_date.strftime('%Y-%m-%d')} - marking as EXPIRED_WORTHLESS"
                 )
                 self._mark_option_expired(position)
 
@@ -485,38 +465,25 @@ class ManagePowerOptionsPositionsCommand(Command):
             realized_pnl=realized_pnl
         )
 
-        # Update equity holding premium (if linked)
+        # NOTE: Premium tracking removed - calculated on-demand via EquityService
+        # The realized_pnl in option_position is sufficient for cost basis calculation
         if position.equity_holding_id:
             equity_db_manager = self.application_context.equity_db_manager
             equity_holding = equity_db_manager.get_holding_by_id(position.equity_holding_id)
 
             if equity_holding:
-                # For expired worthless: collected = original credit, paid = 0
-                if position.is_credit_spread:
-                    collected = position.net_credit * 100
-                    paid = 0.0
-                else:
-                    collected = 0.0
-                    paid = abs(position.net_credit) * 100
-
-                equity_db_manager.update_premium(
-                    holding_id=equity_holding.id,
-                    collected_delta=collected,
-                    paid_delta=paid
-                )
-
                 logger.info(
-                    f"Updated {equity_holding.symbol} premium after expiration: "
-                    f"+${collected:.2f} collected, -${paid:.2f} paid"
+                    f"Option position {position.id} expired for {equity_holding.symbol} - "
+                    f"realized P&L ${realized_pnl:.2f} will be included in next cost basis calculation"
                 )
 
         # Send notification
         pnl_emoji = "✅" if realized_pnl > 0 else "❌"
         self.state_manager.sendTelegramMessage(
-            f"{pnl_emoji} Option Position EXPIRED\\n"
-            f"Symbol: {position.symbol}\\n"
-            f"Strategy: {position.strategy_type}\\n"
-            f"Realized P&L: ${realized_pnl:.2f}\\n"
+            f"{pnl_emoji} Option Position EXPIRED\n"
+            f"Symbol: {position.symbol}\n"
+            f"Strategy: {position.strategy_type}\n"
+            f"Realized P&L: ${realized_pnl:.2f}\n"
             f"Position ID: {position.id}"
         )
 
@@ -533,12 +500,9 @@ class ManagePowerOptionsPositionsCommand(Command):
         logger.debug(f"Checking {len(open_holdings)} open equity holdings for assignments")
 
         # Query IB for current equity positions
-        try:
-            ib_equity_positions = self.client.get_portfolio_positions()
-            ib_positions_by_symbol = {pos.get('symbol'): pos for pos in ib_equity_positions}
-        except Exception as e:
-            logger.warning(f"Could not query IB equity positions: {e}")
-            return
+        # Let exceptions propagate - CommandInvoker will handle them
+        ib_equity_positions = self.client.get_portfolio_positions()
+        ib_positions_by_symbol = {pos.get('symbol'): pos for pos in ib_equity_positions}
 
         # Check each holding - if shares decreased, assignment occurred
         for holding in open_holdings:
@@ -603,11 +567,11 @@ class ManagePowerOptionsPositionsCommand(Command):
 
             # Send notification
             self.state_manager.sendTelegramMessage(
-                f"📤 FULL ASSIGNMENT\\n"
-                f"Symbol: {holding.symbol}\\n"
-                f"Shares Assigned: {shares_assigned}\\n"
-                f"Assignment Price: ${assignment_price:.2f}\\n"
-                f"Stock P&L: ${realized_pnl:.2f}\\n"
+                f"📤 FULL ASSIGNMENT\n"
+                f"Symbol: {holding.symbol}\n"
+                f"Shares Assigned: {shares_assigned}\n"
+                f"Assignment Price: ${assignment_price:.2f}\n"
+                f"Stock P&L: ${realized_pnl:.2f}\n"
                 f"Equity holding CLOSED"
             )
         else:
@@ -624,9 +588,9 @@ class ManagePowerOptionsPositionsCommand(Command):
 
             # Send notification
             self.state_manager.sendTelegramMessage(
-                f"📤 PARTIAL ASSIGNMENT\\n"
-                f"Symbol: {holding.symbol}\\n"
-                f"Shares Assigned: {shares_assigned}\\n"
+                f"📤 PARTIAL ASSIGNMENT\n"
+                f"Symbol: {holding.symbol}\n"
+                f"Shares Assigned: {shares_assigned}\n"
                 f"Remaining Shares: {new_shares}"
             )
 

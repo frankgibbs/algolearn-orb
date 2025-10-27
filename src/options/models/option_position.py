@@ -40,8 +40,8 @@ class OptionPosition(Base):
 
     # Current status
     status = Column(String(20), nullable=False, default="PENDING")  # "PENDING", "OPEN", "CLOSED", "CANCELLED"
-    current_value = Column(Float)  # Current mid price of the spread
-    unrealized_pnl = Column(Float, default=0.0)  # Current unrealized profit/loss
+    current_value = Column(Float)  # Current mid price of the spread (cached, not authoritative)
+    # NOTE: unrealized_pnl removed - calculate on-demand using get_option_quote MCP tool
     realized_pnl = Column(Float)  # Final profit/loss after close
 
     # Exit details
@@ -65,6 +65,12 @@ class OptionPosition(Base):
     def validate_strategy_type(self, key, strategy_type):
         """Validate that strategy type is recognized"""
         valid_strategies = [
+            # Single-leg strategies
+            'SHORT_CALL',
+            'SHORT_PUT',
+            'LONG_CALL',
+            'LONG_PUT',
+            # Multi-leg spreads
             'BULL_PUT_SPREAD',
             'BEAR_CALL_SPREAD',
             'IRON_CONDOR',
@@ -95,19 +101,9 @@ class OptionPosition(Base):
             return max(0, delta.days)
         return None
 
-    @property
-    def pct_of_max_profit(self):
-        """Calculate percentage of maximum profit achieved"""
-        if self.max_profit and self.max_profit > 0 and self.unrealized_pnl is not None:
-            return (self.unrealized_pnl / self.max_profit) * 100
-        return 0.0
-
-    @property
-    def actual_roi(self):
-        """Calculate actual ROI based on unrealized P&L"""
-        if self.max_risk and self.max_risk > 0 and self.unrealized_pnl is not None:
-            return (self.unrealized_pnl / self.max_risk) * 100
-        return 0.0
+    # NOTE: pct_of_max_profit and actual_roi removed
+    # These should be calculated on-demand using real-time option quotes
+    # Use get_option_quote MCP tool to get current prices and calculate P&L
 
     @property
     def is_credit_spread(self):
@@ -122,5 +118,4 @@ class OptionPosition(Base):
     def __repr__(self):
         return f"<OptionPosition(id={self.id}, symbol='{self.symbol}', " \
                f"strategy='{self.strategy_type}', status='{self.status}', " \
-               f"credit=${self.net_credit:.2f}, dte={self.days_to_expiration}, " \
-               f"pnl=${self.unrealized_pnl or 0:.2f})>"
+               f"credit=${self.net_credit:.2f}, dte={self.days_to_expiration})>"

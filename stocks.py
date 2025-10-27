@@ -292,6 +292,7 @@ def main():
     application_context.option_analyzer_service = option_analyzer_service
 
     # Initialize equity database manager for PowerOptions strategy
+    # NOTE: EquityService is instantiated on-demand to avoid storing state
     from src.equity.equity_holding_manager import EquityHoldingManager
 
     equity_db_manager = EquityHoldingManager(application_context)

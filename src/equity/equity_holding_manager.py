@@ -46,12 +46,13 @@ class EquityHoldingManager:
         symbol: str,
         total_shares: int,
         original_cost_basis: float,
-        initial_purchase_date: datetime,
-        premium_collected: float,
-        premium_paid: float
+        initial_purchase_date: datetime
     ) -> EquityHolding:
         """
         Create a new equity holding in PENDING status
+
+        NOTE: Premium tracking removed from model - use EquityService.calculate_effective_cost_basis()
+        for real-time cost basis calculation from linked option positions.
 
         Args:
             purchase_order_id: IB order ID for stock purchase (required)
@@ -59,8 +60,6 @@ class EquityHoldingManager:
             total_shares: Number of shares purchased (required)
             original_cost_basis: Cost per share when purchased (required)
             initial_purchase_date: Date of initial purchase (required)
-            premium_collected: Initial premium collected - must be explicitly set (required)
-            premium_paid: Initial premium paid - must be explicitly set (required)
 
         Returns:
             EquityHolding object
@@ -80,10 +79,6 @@ class EquityHoldingManager:
             raise ValueError("original_cost_basis is REQUIRED and must be positive")
         if initial_purchase_date is None:
             raise ValueError("initial_purchase_date is REQUIRED")
-        if premium_collected is None:
-            raise ValueError("premium_collected is REQUIRED (must be explicitly set, even if 0.0)")
-        if premium_paid is None:
-            raise ValueError("premium_paid is REQUIRED (must be explicitly set, even if 0.0)")
 
         session = self.get_session()
         try:
@@ -98,8 +93,6 @@ class EquityHoldingManager:
                 total_shares=total_shares,
                 original_cost_basis=original_cost_basis,
                 initial_purchase_date=initial_purchase_date,
-                premium_collected=premium_collected,
-                premium_paid=premium_paid,
                 status='PENDING'  # Start as pending until order fills
             )
 
@@ -245,61 +238,8 @@ class EquityHoldingManager:
         finally:
             session.close()
 
-    def update_premium(
-        self,
-        holding_id: int,
-        collected_delta: float,
-        paid_delta: float
-    ) -> EquityHolding:
-        """
-        Update equity holding premium tracking (add to existing totals)
-
-        Args:
-            holding_id: Equity holding ID (required)
-            collected_delta: Amount to add to premium_collected (required)
-            paid_delta: Amount to add to premium_paid (required)
-
-        Returns:
-            Updated EquityHolding object
-
-        Raises:
-            ValueError: If any parameter is None
-            RuntimeError: If holding not found or update fails
-        """
-        if holding_id is None:
-            raise ValueError("holding_id is REQUIRED")
-        if collected_delta is None:
-            raise ValueError("collected_delta is REQUIRED")
-        if paid_delta is None:
-            raise ValueError("paid_delta is REQUIRED")
-
-        session = self.get_session()
-        try:
-            holding = session.query(EquityHolding).filter_by(id=holding_id).first()
-
-            if not holding:
-                raise RuntimeError(f"Equity holding {holding_id} not found")
-
-            # Add to existing premium totals
-            holding.premium_collected += collected_delta
-            holding.premium_paid += paid_delta
-
-            session.commit()
-
-            logger.info(
-                f"Equity holding {holding_id} ({holding.symbol}) premium updated: "
-                f"+${collected_delta:.2f} collected, +${paid_delta:.2f} paid, "
-                f"net: ${holding.total_premium_net:.2f}, "
-                f"effective basis: ${holding.effective_cost_basis:.2f}"
-            )
-            return holding
-
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Failed to update equity holding premium: {e}")
-            raise RuntimeError(f"Equity holding premium update failed: {e}")
-        finally:
-            session.close()
+    # NOTE: update_premium() removed - premium is now calculated on-demand
+    # via EquityService.calculate_effective_cost_basis() using real-time IB data
 
     def close_holding(
         self,

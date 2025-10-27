@@ -9,6 +9,7 @@ seaborn
 ordered-set
 ta-lib==0.4.32
 sqlalchemy==1.4.39
+alembic==1.13.1
 quantstats==0.0.59
 scikit-learn==1.2.2
 prettytable==3.6.0

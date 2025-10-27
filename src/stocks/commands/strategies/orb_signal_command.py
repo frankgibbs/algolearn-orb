@@ -2,7 +2,7 @@ from src.core.command import Command
 from src.core.constants import *
 from src.stocks.services.stocks_strategy_service import StocksStrategyService
 from src.stocks.services.volume_analysis_service import VolumeAnalysisService
-from src.stocks.stocks_config import STOCK_SYMBOLS
+from src.stocks.stocks_database_manager import StocksDatabaseManager
 from src.core.ibclient import IBClient
 from src import logger
 import pytz
@@ -36,14 +36,24 @@ class ORBSignalCommand(Command):
 
         # Initialize services
         strategy_service = StocksStrategyService(self.application_context)
+        database_manager = StocksDatabaseManager(self.application_context)
         # Use the IBClient instance from application context (maintains connection)
         ib_client = self.application_context.client
 
-        logger.info(f"Analyzing {len(STOCK_SYMBOLS)} stocks for ORB breakout signals")
+        # Get all candidates from today's pre-market scan
+        today = now.date()
+        candidates = database_manager.get_candidates(today, selected_only=False)
+
+        if not candidates:
+            logger.info("No candidates found from today's scan - skipping ORB signal detection")
+            return
+
+        logger.info(f"Analyzing {len(candidates)} stocks from scan for ORB breakout signals")
 
         # Check each stock for breakout conditions
         signals_generated = 0
-        for symbol in STOCK_SYMBOLS:
+        for candidate in candidates:
+            symbol = candidate.symbol
             if self._analyze_stock_for_breakout(symbol, strategy_service, ib_client, now):
                 signals_generated += 1
 
@@ -343,12 +353,11 @@ class ORBSignalCommand(Command):
         if risk_pct is None or risk_pct <= 0:
             raise ValueError("CONFIG_RISK_PERCENTAGE is REQUIRED and must be positive")
 
-        # Get cached margin instead of API call
-        margin_cache = self.state_manager.get_state(FIELD_STOCK_MARGIN_REQUIREMENTS) or {}
-        margin_data = margin_cache.get(symbol)
+        # Get margin from database
+        margin_data = self.database_manager.get_margin(symbol)
         if not margin_data:
-            raise RuntimeError(f"No cached margin for {symbol}")
-        margin_per_share = margin_data['margin']
+            raise RuntimeError(f"No margin data for {symbol} in database - opening range may not have been calculated yet")
+        margin_per_share = margin_data.margin_per_share
 
         # Calculate how many shares we can afford with risk %
         risk_amount = account_value * (risk_pct / 100)
