@@ -9,8 +9,6 @@ logger = logging.getLogger(__name__)
 from sqlalchemy.orm import declarative_base
 Base = declarative_base()
 
-os.environ['TZ'] = 'US/Pacific'
-time.tzset()
 import mplfinance as mpf
 
 logger.info(time.strftime('%X %x %Z'))

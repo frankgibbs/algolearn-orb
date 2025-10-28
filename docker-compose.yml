@@ -10,6 +10,7 @@ services:
       - "8005:8003"  # MCP API
       - "8006:8080"  # Dashboard
     environment:
+      - TZ=America/Los_Angeles
       - HOST=paper
       - PORT=4004
       - IB_CLIENT_ID=80
