@@ -159,6 +159,10 @@ class IBClient(EWrapper, EClient):
         self.account_values = {}
         self.account_values_received_event = threading.Event()
 
+        # Add for order modifications
+        self.order_modification_event = threading.Event()
+        self.order_modification_details = {}  # Track by order ID
+
         logger.info(config)
 
     def check_connection(self):
@@ -229,7 +233,15 @@ class IBClient(EWrapper, EClient):
             logger.error(f"ERROR CALLBACK: Order submission {reqId} failed: {errorCode} - {errorString}")
             # Set the event to unblock the waiting thread, but leave the data as None
             self.order_submission_event.set()
-        
+            return
+
+        # Handle errors for order modifications
+        if reqId in self.order_modification_details:
+            logger.error(f"ERROR CALLBACK: Order modification {reqId} failed: {errorCode} - {errorString}")
+            # Set event to unblock, but leave data as None to signal failure
+            self.order_modification_event.set()
+            return
+
         #print("Error: ", reqId, " ", errorCode, " ", errorString)
         
     def get_historic_data(self, contract, history_duration, history_bar_size,timeout: int = 10, whatToShow = "MIDPOINT") -> Optional[Dict[str, Any]]:
@@ -563,6 +575,12 @@ class IBClient(EWrapper, EClient):
             logger.info(f"Order {orderId} details received for submitOrder - margin change: {orderState.initMarginChange}")
             self.submitted_order_details[orderId] = order_details
             self.order_submission_event.set()
+
+        # Check if this order was being modified
+        if orderId in self.order_modification_details:
+            logger.info(f"Order {orderId} modification confirmed - auxPrice: {order.auxPrice}")
+            self.order_modification_details[orderId] = order_details
+            self.order_modification_event.set()
 
     def openOrderEnd(self):
         """Callback when all open orders have been received."""
@@ -1854,12 +1872,28 @@ class IBClient(EWrapper, EClient):
         # Modify the stop price
         existing_order.auxPrice = new_stop_price
 
+        # Clear previous modification state
+        self.order_modification_event.clear()
+        self.order_modification_details.clear()
+
+        # Pre-populate to signal we're expecting this order ID
+        self.order_modification_details[order_id] = None
+
         logger.info(f"Modifying stop order {order_id} to new stop price: {new_stop_price}")
 
         # Re-submit with same order ID (this modifies it)
         self.placeOrder(order_id, contract, existing_order)
 
-        return True
+        # Wait for confirmation or error callback
+        if self.order_modification_event.wait(timeout):
+            order_details = self.order_modification_details.get(order_id)
+            if order_details:
+                logger.info(f"Stop order {order_id} successfully modified to ${new_stop_price:.2f}")
+                return True
+            else:
+                raise RuntimeError(f"Order modification failed for order {order_id} - check error logs for details")
+        else:
+            raise TimeoutError(f"Timeout waiting for order modification confirmation for order {order_id}")
 
     def convert_stop_to_market(self, order_id, timeout=10):
         """

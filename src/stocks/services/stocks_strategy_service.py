@@ -757,25 +757,39 @@ class StocksStrategyService:
                 else:  # SHORT
                     unrealized_pnl = (p.entry_price - current_price) * p.shares
 
+                # Calculate locked P&L (worst case exit at current stop)
+                if p.direction == 'LONG':
+                    locked_pnl = (p.current_stop_price - p.entry_price) * p.shares
+                else:  # SHORT
+                    locked_pnl = (p.entry_price - p.current_stop_price) * p.shares
+
                 result.append({
                     'symbol': p.symbol,
                     'direction': p.direction,
                     'shares': p.shares,
                     'entry_price': p.entry_price,
                     'current_price': current_price,
-                    'unrealized_pnl': unrealized_pnl
+                    'unrealized_pnl': unrealized_pnl,
+                    'locked_pnl': locked_pnl
                 })
 
             except Exception as e:
                 logger.error(f"Error calculating P&L for {p.symbol}: {e}")
                 # Add position with zero P&L on error
+                # Calculate locked P&L even on error (we have entry and stop data)
+                if p.direction == 'LONG':
+                    locked_pnl = (p.current_stop_price - p.entry_price) * p.shares
+                else:  # SHORT
+                    locked_pnl = (p.entry_price - p.current_stop_price) * p.shares
+
                 result.append({
                     'symbol': p.symbol,
                     'direction': p.direction,
                     'shares': p.shares,
                     'entry_price': p.entry_price,
                     'current_price': p.entry_price,
-                    'unrealized_pnl': 0.0
+                    'unrealized_pnl': 0.0,
+                    'locked_pnl': locked_pnl
                 })
 
         return result

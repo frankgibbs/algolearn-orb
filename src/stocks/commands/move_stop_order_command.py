@@ -101,7 +101,7 @@ class MoveStopOrderCommand(Command):
                     new_stop = current_price + (position.range_size * trailing_ratio)
 
                 logger.info(f"Activating trailing stop for {position.symbol} at ${new_stop:.2f}")
-                return new_stop
+                return round(new_stop, 2)
         else:
             # Already trailing, check if we can move stop further
             current_stop = position.trailing_stop_price  # Always populated now, no fallback needed
@@ -110,12 +110,12 @@ class MoveStopOrderCommand(Command):
                 potential_stop = current_price - (position.range_size * trailing_ratio)
                 if potential_stop > current_stop:
                     logger.info(f"Moving trailing stop higher for {position.symbol}: ${current_stop:.2f} → ${potential_stop:.2f}")
-                    return potential_stop
+                    return round(potential_stop, 2)
             else:  # SHORT
                 potential_stop = current_price + (position.range_size * trailing_ratio)
                 if potential_stop < current_stop:
                     logger.info(f"Moving trailing stop lower for {position.symbol}: ${current_stop:.2f} → ${potential_stop:.2f}")
-                    return potential_stop
+                    return round(potential_stop, 2)
 
         return None
 
@@ -183,10 +183,17 @@ class MoveStopOrderCommand(Command):
                 trailing_stop_price=new_stop_price
             )
 
-            # Send notification
+            # Calculate locked P&L (worst case exit at new stop)
+            if position.direction == 'LONG':
+                locked_pnl = (new_stop_price - position.entry_price) * position.shares
+            else:  # SHORT
+                locked_pnl = (position.entry_price - new_stop_price) * position.shares
+
+            # Send notification with locked value
             action = "🔼 Raised" if position.direction == 'LONG' else "🔽 Lowered"
+            locked_sign = "+" if locked_pnl >= 0 else ""
             self.state_manager.sendTelegramMessage(
-                f"🎯 {action} trailing stop: {position.symbol} → ${new_stop_price:.2f}"
+                f"🎯 {action} trailing stop: {position.symbol} → ${new_stop_price:.2f} (Locked: {locked_sign}${locked_pnl:.2f})"
             )
         else:
             logger.error(f"Failed to modify stop order {position.stop_order_id}")

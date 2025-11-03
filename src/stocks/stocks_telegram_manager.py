@@ -221,22 +221,26 @@ class StocksTelegramManager(IObserver):
                 return
 
             # Format as PrettyTable
-            table = PrettyTable(['Symbol', 'Qty', 'P&L'])
+            table = PrettyTable(['Symbol', 'Qty', 'P&L', 'Locked'])
             table.align['Symbol'] = 'l'
             table.align['Qty'] = 'r'
             table.align['P&L'] = 'r'
+            table.align['Locked'] = 'r'
 
             total_pnl = 0
+            total_locked = 0
             for p in positions:
                 # Format qty with +/- based on direction
                 qty_str = f"+{p['shares']}" if p['direction'] == 'LONG' else f"-{p['shares']}"
                 pnl_str = f"${p['unrealized_pnl']:.2f}"
-                table.add_row([p['symbol'], qty_str, pnl_str])
+                locked_str = f"${p['locked_pnl']:.2f}"
+                table.add_row([p['symbol'], qty_str, pnl_str, locked_str])
                 total_pnl += p['unrealized_pnl']
+                total_locked += p['locked_pnl']
 
             # Add total row
-            table.add_row(['---', '---', '---'])
-            table.add_row(['TOTAL', '', f"${total_pnl:.2f}"])
+            table.add_row(['---', '---', '---', '---'])
+            table.add_row(['TOTAL', '', f"${total_pnl:.2f}", f"${total_locked:.2f}"])
 
             # Send using v13.5 parse_mode
             emoji = "📈" if total_pnl >= 0 else "📉"
