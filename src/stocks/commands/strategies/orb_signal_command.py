@@ -353,22 +353,22 @@ class ORBSignalCommand(Command):
         if risk_pct is None or risk_pct <= 0:
             raise ValueError("CONFIG_RISK_PERCENTAGE is REQUIRED and must be positive")
 
-        # Get margin from database
-        margin_data = self.database_manager.get_margin(symbol)
-        if not margin_data:
-            raise RuntimeError(f"No margin data for {symbol} in database - opening range may not have been calculated yet")
-        margin_per_share = margin_data.margin_per_share
+        # Use current stock price as margin requirement for position sizing
+        # This is more reliable than potentially stale/incorrect margin data from database
+        # Conservative 1:1 approach (100% margin requirement)
+        current_price = breakout_signal['entry_price']
+        margin_per_share = current_price
 
         # Calculate how many shares we can afford with risk %
         risk_amount = account_value * (risk_pct / 100)
 
-        # Position size = risk amount / margin per share
+        # Position size = risk amount / margin per share (using stock price)
         quantity = int(risk_amount / margin_per_share)
 
         if quantity <= 0:
             raise ValueError(f"Calculated position size is {quantity} for {symbol}")
 
-        logger.info(f"{symbol}: Margin/share=${margin_per_share:.2f}, Risk=${risk_amount:.2f}, Shares={quantity}")
+        logger.info(f"{symbol}: Using price ${current_price:.2f} as margin (1:1), Risk=${risk_amount:.2f}, Shares={quantity}")
 
         # Prepare event data
         position_data = {
