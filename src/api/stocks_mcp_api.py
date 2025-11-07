@@ -30,6 +30,9 @@ from src.core.constants import *
 from src.stocks.services.stocks_scanner_service import StocksScannerService
 from src.stocks.services.stocks_strategy_service import StocksStrategyService
 from src.stocks.services.volatility_service import VolatilityService
+from src.stocks.services.fundamental_data_service import FundamentalDataService
+from src.stocks.services.sector_classification_service import SectorClassificationService
+from src.stocks.services.dividend_data_service import DividendDataService
 from src import logger
 
 class StocksMcpApi:
@@ -484,6 +487,48 @@ class StocksMcpApi:
                         "required": []
                     }
                 ),
+                Tool(
+                    name="get_fundamental_data",
+                    description="Get comprehensive fundamental data including P/E, debt-to-equity, ROE, earnings growth, and market cap",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Stock symbol (e.g., AAPL)"
+                            }
+                        },
+                        "required": ["symbol"]
+                    }
+                ),
+                Tool(
+                    name="get_sector_info",
+                    description="Get sector and industry classification for a stock",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Stock symbol (e.g., AAPL)"
+                            }
+                        },
+                        "required": ["symbol"]
+                    }
+                ),
+                Tool(
+                    name="get_dividend_data",
+                    description="Get dividend metrics including yield, amount, frequency, and payment dates",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {
+                            "symbol": {
+                                "type": "string",
+                                "description": "Stock symbol (e.g., AAPL)"
+                            }
+                        },
+                        "required": ["symbol"]
+                    }
+                ),
             ]
 
         @self.server.call_tool()
@@ -531,6 +576,12 @@ class StocksMcpApi:
                     return await self._get_equity_holdings(arguments or {})
                 elif name == "get_account_summary":
                     return await self._get_account_summary(arguments or {})
+                elif name == "get_fundamental_data":
+                    return await self._get_fundamental_data(arguments or {})
+                elif name == "get_sector_info":
+                    return await self._get_sector_info(arguments or {})
+                elif name == "get_dividend_data":
+                    return await self._get_dividend_data(arguments or {})
                 else:
                     raise ValueError(f"Unknown tool: {name}")
             except Exception as e:
@@ -1519,6 +1570,87 @@ class StocksMcpApi:
             logger.error(f"Error in _analyze_option_position: {e}")
             return [TextContent(type="text", text=f"Error analyzing option position: {str(e)}", meta={})]
 
+    async def _get_fundamental_data(self, args: dict) -> list[TextContent]:
+        """Get comprehensive fundamental data for a stock"""
+        symbol = args.get("symbol")
+
+        if not symbol:
+            return [TextContent(type="text", text="Error: symbol is required", meta={})]
+
+        try:
+            # Initialize fundamental data service
+            fundamental_service = FundamentalDataService(self.application_context)
+
+            # Get fundamental data
+            fundamental_data = fundamental_service.get_fundamental_data(symbol)
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "symbol": symbol,
+                "data": fundamental_data
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_fundamental_data: {e}")
+            return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
+
+    async def _get_sector_info(self, args: dict) -> list[TextContent]:
+        """Get sector and industry classification for a stock"""
+        symbol = args.get("symbol")
+
+        if not symbol:
+            return [TextContent(type="text", text="Error: symbol is required", meta={})]
+
+        try:
+            # Initialize sector classification service
+            sector_service = SectorClassificationService(self.application_context)
+
+            # Get sector info
+            sector_info = sector_service.get_sector_info(symbol)
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "symbol": symbol,
+                "data": sector_info
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_sector_info: {e}")
+            return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
+
+    async def _get_dividend_data(self, args: dict) -> list[TextContent]:
+        """Get dividend metrics and schedule for a stock"""
+        symbol = args.get("symbol")
+
+        if not symbol:
+            return [TextContent(type="text", text="Error: symbol is required", meta={})]
+
+        try:
+            # Initialize dividend data service
+            dividend_service = DividendDataService(self.application_context)
+
+            # Get dividend data
+            dividend_data = dividend_service.get_dividend_data(symbol)
+
+            # Format result
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "symbol": symbol,
+                "data": dividend_data
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _get_dividend_data: {e}")
+            return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
+
     def run(self, host="0.0.0.0", port=8003):
         """Run the MCP server with both HTTP endpoints and MCP protocol support"""
         import logging
@@ -1565,7 +1697,10 @@ class StocksMcpApi:
                     "analyze_option_position",
                     "place_stock_order",
                     "get_equity_positions",
-                    "get_account_summary"
+                    "get_account_summary",
+                    "get_fundamental_data",
+                    "get_sector_info",
+                    "get_dividend_data"
                 ]
             }
 
@@ -1902,6 +2037,48 @@ class StocksMcpApi:
                                         "properties": {}
                                     }
                                 },
+                                {
+                                    "name": "get_fundamental_data",
+                                    "description": "Get comprehensive fundamental data including P/E, debt-to-equity, ROE, earnings growth, and market cap",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {
+                                                "type": "string",
+                                                "description": "Stock symbol (e.g., AAPL)"
+                                            }
+                                        },
+                                        "required": ["symbol"]
+                                    }
+                                },
+                                {
+                                    "name": "get_sector_info",
+                                    "description": "Get sector and industry classification for a stock",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {
+                                                "type": "string",
+                                                "description": "Stock symbol (e.g., AAPL)"
+                                            }
+                                        },
+                                        "required": ["symbol"]
+                                    }
+                                },
+                                {
+                                    "name": "get_dividend_data",
+                                    "description": "Get dividend metrics including yield, amount, frequency, and payment dates",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "symbol": {
+                                                "type": "string",
+                                                "description": "Stock symbol (e.g., AAPL)"
+                                            }
+                                        },
+                                        "required": ["symbol"]
+                                    }
+                                },
                             ]
                         }
                     }
@@ -1950,6 +2127,12 @@ class StocksMcpApi:
                         result = await self._get_equity_positions(arguments)
                     elif tool_name == "get_account_summary":
                         result = await self._get_account_summary(arguments)
+                    elif tool_name == "get_fundamental_data":
+                        result = await self._get_fundamental_data(arguments)
+                    elif tool_name == "get_sector_info":
+                        result = await self._get_sector_info(arguments)
+                    elif tool_name == "get_dividend_data":
+                        result = await self._get_dividend_data(arguments)
                     else:
                         return {
                             "jsonrpc": "2.0",
