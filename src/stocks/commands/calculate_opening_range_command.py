@@ -9,7 +9,14 @@ from datetime import datetime, time
 from prettytable import PrettyTable
 
 class CalculateOpeningRangeCommand(Command):
-    """Calculate opening range for all candidates from pre-market scan based on CONFIG_ORB_TIMEFRAME (15/30/60 mins after market open)"""
+    """
+    Calculate opening range for all candidates from pre-market scan
+
+    Enhanced for Academic ORB Strategy (Zarattini, Barbon, Aziz 2024):
+    - Calculates directional bias (BULLISH/BEARISH) by comparing opening to previous close
+    - Tracks opening range volume for relative volume calculations
+    - Supports CONFIG_ORB_TIMEFRAME (5/15/30/60 mins after market open)
+    """
 
     def execute(self, event):
         """
@@ -91,6 +98,11 @@ class CalculateOpeningRangeCommand(Command):
 
         logger.info(f"Calculating {timeframe_minutes}m opening range for {symbol}")
 
+        # Fetch previous day's close for directional bias calculation
+        previous_close = self._get_previous_close(symbol)
+        if previous_close is None:
+            logger.warning(f"Could not get previous close for {symbol}, skipping directional bias")
+
         # Calculate market open time for today in Pacific Time (6:30 AM PST = 9:30 AM ET)
         pacific_tz = pytz.timezone('US/Pacific')
         today_date = now.date()
@@ -129,33 +141,70 @@ class CalculateOpeningRangeCommand(Command):
         for i, row in bars.iterrows():
             logger.info(f"  Bar {i}: {row['date']} - OHLC: {row['open']:.2f}/{row['high']:.2f}/{row['low']:.2f}/{row['close']:.2f}")
 
-        # Find the opening range bar by counting backwards from the last bar
-        last_bar = bars.iloc[-1]
-        last_bar_time = last_bar['date']
+        # Find the opening range bar using timestamp-based selection (robust approach)
+        # IB returns timestamps in ET (market timezone) - market opens at 9:30 AM ET
 
-        # Assume timestamps are in ET (market timezone)
-        # Market opens at 9:30 AM ET
-        market_open_time = last_bar_time.replace(hour=9, minute=30, second=0, microsecond=0)
+        # Get timezone from first bar (IB provides timezone-aware timestamps)
+        first_bar_time = bars.iloc[0]['date']
+        bar_tz = first_bar_time.tzinfo
 
-        # Calculate minutes from market open to last bar
-        minutes_from_open = int((last_bar_time - market_open_time).total_seconds() / 60)
+        # Define market open time for today in ET timezone
+        # Use date from first bar to handle potential date issues
+        market_date = first_bar_time.date()
+        market_open_et = first_bar_time.replace(hour=9, minute=30, second=0, microsecond=0)
 
-        # Calculate how many bars since market open
-        bars_since_open = minutes_from_open // timeframe_minutes
+        # Define opening range end time based on timeframe
+        opening_range_end_et = market_open_et.replace(
+            minute=30 + timeframe_minutes,
+            second=0,
+            microsecond=0
+        )
 
-        # The opening bar index (counting backwards from last bar)
-        opening_bar_index = len(bars) - bars_since_open - 1
+        logger.info(f"Looking for opening bar between {market_open_et} and {opening_range_end_et}")
 
-        logger.info(f"Last bar at {last_bar_time}, {minutes_from_open} minutes from market open")
-        logger.info(f"Opening bar should be at index {opening_bar_index} ({bars_since_open} bars back)")
+        # Find first bar that starts at or after market open
+        opening_bar = None
+        opening_bar_index = None
 
-        if opening_bar_index < 0 or opening_bar_index >= len(bars):
-            logger.warning(f"Cannot find opening bar for {symbol}: calculated index {opening_bar_index} out of range (0-{len(bars)-1}), skipping")
+        for i, row in bars.iterrows():
+            bar_time = row['date']
+
+            # Check if this bar is the opening range bar
+            # Bar time should be >= market open and < opening range end
+            if bar_time >= market_open_et and bar_time < opening_range_end_et:
+                opening_bar = bars.iloc[i:i+1]
+                opening_bar_index = i
+                bar_timestamp = row['date']
+                logger.info(f"Found opening range bar at index {i}, timestamp {bar_timestamp}")
+                break
+
+        if opening_bar is None:
+            logger.warning(
+                f"Cannot find opening bar for {symbol} between {market_open_et} and {opening_range_end_et}, skipping"
+            )
             return None
 
-        opening_bar = bars.iloc[opening_bar_index:opening_bar_index+1]
-        bar_timestamp = opening_bar.iloc[0]['date']
         logger.info(f"Using opening range bar at {bar_timestamp} for {symbol}")
+
+        # Extract opening price and volume from the bar
+        opening_price = opening_bar.iloc[0]['open']
+        opening_volume = int(opening_bar.iloc[0]['volume'])
+
+        # Calculate directional bias (BULLISH if open > prev_close, BEARISH otherwise)
+        directional_bias = None
+        if previous_close is not None:
+            if opening_price > previous_close:
+                directional_bias = "BULLISH"
+            elif opening_price < previous_close:
+                directional_bias = "BEARISH"
+            else:
+                # Opening at exactly previous close - consider neutral, default to BULLISH
+                directional_bias = "BULLISH"
+
+            logger.info(
+                f"Directional bias for {symbol}: {directional_bias} "
+                f"(open: ${opening_price:.2f}, prev_close: ${previous_close:.2f})"
+            )
 
         # Calculate range from opening bar only
         range_data = strategy_service.calculate_range(opening_bar)
@@ -167,7 +216,7 @@ class CalculateOpeningRangeCommand(Command):
                        f"({stock_config['min_range_pct']}-{stock_config['max_range_pct']}%), skipping")
             return None
 
-        # Save valid range to database
+        # Save valid range to database with directional bias and volume
         strategy_service.save_opening_range(
             symbol=symbol,
             date=now.date(),
@@ -175,12 +224,17 @@ class CalculateOpeningRangeCommand(Command):
             range_high=range_data['range_high'],
             range_low=range_data['range_low'],
             range_size=range_data['range_size'],
-            range_size_pct=range_data['range_size_pct']
+            range_size_pct=range_data['range_size_pct'],
+            directional_bias=directional_bias,
+            volume=opening_volume
         )
 
-        logger.info(f"Opening range saved for {symbol}: "
-                   f"${range_data['range_low']:.2f}-${range_data['range_high']:.2f} "
-                   f"({range_data['range_size_pct']:.1f}%)")
+        logger.info(
+            f"Opening range saved for {symbol}: "
+            f"${range_data['range_low']:.2f}-${range_data['range_high']:.2f} "
+            f"({range_data['range_size_pct']:.1f}%), "
+            f"bias: {directional_bias}, volume: {opening_volume:,}"
+        )
 
         # Update margin for this symbol (on-demand calculation)
         self._update_margin_for_symbol(symbol)
@@ -290,3 +344,49 @@ class CalculateOpeningRangeCommand(Command):
         # Use shared formatting method
         message = strategy_service.format_ranges_table(valid_ranges)
         self.state_manager.sendTelegramMessage(message)
+
+    def _get_previous_close(self, symbol):
+        """
+        Get previous day's closing price for directional bias calculation
+
+        Args:
+            symbol: Stock symbol (required)
+
+        Returns:
+            Previous day's close price, or None if unable to fetch
+
+        Raises:
+            ValueError: If symbol is None
+        """
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+
+        try:
+            # Fetch 2 days of daily bars to ensure we get yesterday's complete bar
+            contract = self.client.get_stock_contract(symbol)
+            bars = self.client.get_historic_data(
+                contract=contract,
+                history_duration="2 D",
+                history_bar_size="1 day",
+                timeout=10,
+                whatToShow="TRADES"
+            )
+
+            if bars is None or bars.empty:
+                logger.warning(f"No historical daily data for {symbol}")
+                return None
+
+            if len(bars) < 2:
+                logger.warning(f"Insufficient daily data for {symbol} (need 2 days, have {len(bars)})")
+                return None
+
+            # Get yesterday's bar (second to last, since last might be incomplete today)
+            yesterday_bar = bars.iloc[-2]
+            previous_close = yesterday_bar['close']
+
+            logger.debug(f"Previous close for {symbol}: ${previous_close:.2f}")
+            return previous_close
+
+        except Exception as e:
+            logger.warning(f"Error fetching previous close for {symbol}: {e}")
+            return None

@@ -9,9 +9,9 @@ from src.stocks.commands.manage_stock_positions_command import ManageStockPositi
 from src.stocks.commands.stocks_connection_manager import StocksConnectionManager
 from src.stocks.commands.strategies.orb_signal_command import ORBSignalCommand
 from src.stocks.commands.end_of_day_exit_command import EndOfDayExitCommand
-from src.stocks.commands.time_based_exit_command import TimeBasedExitCommand
+# from src.stocks.commands.time_based_exit_command import TimeBasedExitCommand  # Disabled: Not part of Academic ORB Strategy
 from src.stocks.commands.move_stop_order_command import MoveStopOrderCommand
-from src.stocks.commands.analysis.volume_analysis_command import VolumeAnalysisCommand
+# from src.stocks.commands.analysis.volume_analysis_command import VolumeAnalysisCommand  # Disabled: Z-score not in Academic ORB Strategy
 from src.options.commands.manage_option_positions_command import ManageOptionPositionsCommand
 from src.equity.commands.manage_power_options_positions_command import ManagePowerOptionsPositionsCommand
 
@@ -38,11 +38,11 @@ class StocksTradeManager(IObserver):
 
         # Register position management commands
         self.command_invoker.register_command(EVENT_TYPE_END_OF_DAY_EXIT, EndOfDayExitCommand(self.application_context))
-        self.command_invoker.register_command(EVENT_TYPE_TIME_BASED_EXIT, TimeBasedExitCommand(self.application_context))
+        # self.command_invoker.register_command(EVENT_TYPE_TIME_BASED_EXIT, TimeBasedExitCommand(self.application_context))  # Disabled: Not part of Academic ORB Strategy
         self.command_invoker.register_command(EVENT_TYPE_MOVE_STOP_ORDER, MoveStopOrderCommand(self.application_context))
 
         # Register analysis commands
-        self.command_invoker.register_command(EVENT_TYPE_VOLUME_ANALYSIS, VolumeAnalysisCommand(self.application_context))
+        # self.command_invoker.register_command(EVENT_TYPE_VOLUME_ANALYSIS, VolumeAnalysisCommand(self.application_context))  # Disabled: Z-score not in Academic ORB Strategy
 
         # Register option trading commands
         self.command_invoker.register_command(EVENT_TYPE_MANAGE_OPTION_POSITIONS, ManageOptionPositionsCommand(self.application_context))

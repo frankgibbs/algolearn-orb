@@ -7,7 +7,14 @@ import pytz
 from datetime import datetime
 
 class PreMarketScanCommand(Command):
-    """Pre-market scanning for ORB candidates at 5:30 AM PST"""
+    """
+    Pre-market scanning for ORB candidates at 5:30 AM PST
+
+    Enhanced for Academic ORB Strategy (Zarattini, Barbon, Aziz 2024):
+    - Uses basic filters: price range, minimum volume, minimum ATR
+    - Returns broader candidate list for relative volume ranking later
+    - Removed pre-market change requirement (strategy focuses on opening momentum instead)
+    """
 
     def execute(self, event):
         """
@@ -36,7 +43,6 @@ class PreMarketScanCommand(Command):
         min_price = self._get_required_config_value(CONFIG_MIN_PRICE, "minimum price")
         max_price = self._get_required_config_value(CONFIG_MAX_PRICE, "maximum price")
         min_volume = self._get_required_config_value(CONFIG_MIN_VOLUME, "minimum volume")
-        min_pre_market_change = self._get_required_config_value(CONFIG_MIN_PRE_MARKET_CHANGE, "minimum pre-market change %")
 
         # Validate price range
         if min_price >= max_price:
@@ -47,18 +53,19 @@ class PreMarketScanCommand(Command):
             raise ValueError(f"min_price must be > 0, got ${min_price}")
         if min_volume <= 0:
             raise ValueError(f"min_volume must be > 0, got {min_volume:,}")
-        if min_pre_market_change < 0:
-            raise ValueError(f"min_pre_market_change must be >= 0, got {min_pre_market_change}%")
 
-        logger.info(f"Scanning with filters: Price ${min_price}-${max_price}, Volume {min_volume:,}, Min Change {min_pre_market_change}%")
+        logger.info(
+            f"Scanning with filters: Price ${min_price}-${max_price}, Volume {min_volume:,}\n"
+            f"Note: Relative volume filtering (top {self._get_top_n_stocks()}) will be applied after opening range calculation"
+        )
 
-        # Build scanner criteria
+        # Build scanner criteria (removed pre-market change requirement per academic strategy)
         scan_criteria = {
             "min_price": min_price,
             "max_price": max_price,
             "min_volume": min_volume,
-            "min_pre_market_change": min_pre_market_change,
-            "max_results": 100  # Get more results to filter down
+            "min_pre_market_change": 0,  # No minimum - academic strategy focuses on opening momentum instead
+            "max_results": 150  # Get more results for relative volume ranking later
         }
 
         # Execute pre-market scanner
@@ -106,3 +113,16 @@ class PreMarketScanCommand(Command):
 
         logger.info(f"Using configured {description}: {value}")
         return value
+
+    def _get_top_n_stocks(self):
+        """
+        Get TOP_N_STOCKS config value for logging purposes
+
+        Returns:
+            Top N value or "N/A" if not configured
+        """
+        try:
+            top_n = self.state_manager.get_config_value(CONFIG_TOP_N_STOCKS)
+            return top_n if top_n is not None else "N/A"
+        except:
+            return "N/A"

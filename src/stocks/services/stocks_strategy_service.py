@@ -93,18 +93,20 @@ class StocksStrategyService:
 
         return opening_range
 
-    def save_opening_range(self, symbol, date, timeframe_minutes, range_high, range_low, range_size, range_size_pct):
+    def save_opening_range(self, symbol, date, timeframe_minutes, range_high, range_low, range_size, range_size_pct, directional_bias=None, volume=None):
         """
         Save opening range to database
 
         Args:
             symbol: Stock symbol (required)
             date: Date of range (required)
-            timeframe_minutes: Timeframe in minutes - 15, 30, or 60 (required)
+            timeframe_minutes: Timeframe in minutes - 5, 15, 30, or 60 (required)
             range_high: High of opening range (required)
             range_low: Low of opening range (required)
             range_size: Absolute size of range (required)
             range_size_pct: Percentage size of range (required)
+            directional_bias: Opening momentum direction - BULLISH or BEARISH (optional)
+            volume: Total volume during opening range period (optional)
 
         Raises:
             ValueError: If any parameter is None or invalid
@@ -115,8 +117,8 @@ class StocksStrategyService:
             raise ValueError("date is REQUIRED")
         if timeframe_minutes is None:
             raise ValueError("timeframe_minutes is REQUIRED")
-        if timeframe_minutes not in [15, 30, 60]:
-            raise ValueError("timeframe_minutes must be 15, 30, or 60")
+        if timeframe_minutes not in [5, 15, 30, 60]:
+            raise ValueError("timeframe_minutes must be 5, 15, 30, or 60")
         if range_high is None:
             raise ValueError("range_high is REQUIRED")
         if range_low is None:
@@ -134,9 +136,18 @@ class StocksStrategyService:
         if range_size_pct <= 0:
             raise ValueError(f"Invalid range_size_pct: {range_size_pct}")
 
-        logger.info(f"Saving opening range for {symbol}: ${range_low:.2f}-${range_high:.2f} ({range_size_pct:.1f}%)")
+        log_msg = f"Saving opening range for {symbol}: ${range_low:.2f}-${range_high:.2f} ({range_size_pct:.1f}%)"
+        if directional_bias:
+            log_msg += f", bias: {directional_bias}"
+        if volume:
+            log_msg += f", volume: {volume:,}"
+        logger.info(log_msg)
 
-        self.database_manager.save_opening_range(symbol, date, timeframe_minutes, range_high, range_low, range_size, range_size_pct)
+        self.database_manager.save_opening_range(
+            symbol, date, timeframe_minutes, range_high, range_low, range_size, range_size_pct,
+            directional_bias=directional_bias,
+            volume=volume
+        )
 
     def fetch_historical_bars(self, contract, duration, bar_size):
         """
@@ -422,27 +433,22 @@ class StocksStrategyService:
         range_mid = (range_high + range_low) / 2
         range_size = range_high - range_low
 
-        # Get take profit and trailing stop ratios from config
-        tp_ratio = self.state_manager.get_config_value(CONFIG_TAKE_PROFIT_RATIO)
-        if tp_ratio is None:
-            raise ValueError("CONFIG_TAKE_PROFIT_RATIO not configured - cannot use default values for trading parameters")
+        # Academic ORB Strategy: No take-profit targets
+        # Positions exit via ATR-based stops or EOD profitable closure only
 
         signal = 'NONE'
         entry_price = current_price
         stop_loss = None
-        take_profit = None
 
         # Check for long breakout (close above range high)
         if previous_close > range_high:
             signal = 'LONG'
             stop_loss = range_mid  # Stop at range midpoint
-            take_profit = entry_price + (range_size * tp_ratio)  # 1.5x range from entry
 
         # Check for short breakout (close below range low)
         elif previous_close < range_low:
             signal = 'SHORT'
             stop_loss = range_mid  # Stop at range midpoint
-            take_profit = entry_price - (range_size * tp_ratio)  # 1.5x range from entry
 
         logger.info(f"Breakout signal for {symbol}: {signal}")
 
@@ -450,13 +456,15 @@ class StocksStrategyService:
             'signal': signal,
             'entry_price': entry_price,
             'stop_loss': stop_loss,
-            'take_profit': take_profit,
+            'take_profit': None,  # Academic strategy: no take-profit
             'range_size': range_size
         }
 
     def calculate_position_parameters(self, signal_info, account_value, risk_pct):
         """
-        Calculate position size and risk parameters
+        Calculate position size and risk parameters (Academic ORB Strategy)
+
+        No take-profit targets - positions exit via ATR-based stops or EOD closure only.
 
         Args:
             signal_info: Signal information dict (required)
@@ -466,9 +474,7 @@ class StocksStrategyService:
         Returns:
             Dict with position parameters: {
                 'shares': int,
-                'risk_amount': float,
-                'potential_profit': float,
-                'risk_reward_ratio': float
+                'risk_amount': float
             }
 
         Raises:
@@ -483,10 +489,9 @@ class StocksStrategyService:
 
         entry_price = signal_info['entry_price']
         stop_loss = signal_info['stop_loss']
-        take_profit = signal_info['take_profit']
 
-        if entry_price is None or stop_loss is None or take_profit is None:
-            raise ValueError("signal_info must contain entry_price, stop_loss, and take_profit")
+        if entry_price is None or stop_loss is None:
+            raise ValueError("signal_info must contain entry_price and stop_loss")
 
         # Calculate risk amount per share
         risk_per_share = abs(entry_price - stop_loss)
@@ -497,21 +502,12 @@ class StocksStrategyService:
         total_risk_amount = account_value * (risk_pct / 100)
         shares = int(total_risk_amount / risk_per_share)
 
-        # Calculate potential profit
-        profit_per_share = abs(take_profit - entry_price)
-        potential_profit = shares * profit_per_share
-
-        # Calculate risk/reward ratio
-        risk_reward_ratio = profit_per_share / risk_per_share if risk_per_share > 0 else 0
-
-        logger.info(f"Position parameters: {shares} shares, risk ${total_risk_amount:.2f}, "
-                   f"potential profit ${potential_profit:.2f}, R/R {risk_reward_ratio:.2f}")
+        # Academic strategy: No take-profit, no R/R ratio calculation
+        logger.info(f"Position parameters: {shares} shares, risk ${total_risk_amount:.2f}")
 
         return {
             'shares': shares,
-            'risk_amount': total_risk_amount,
-            'potential_profit': potential_profit,
-            'risk_reward_ratio': risk_reward_ratio
+            'risk_amount': total_risk_amount
         }
 
     def _validate_range_percentage(self, range_size_pct, stock_config):

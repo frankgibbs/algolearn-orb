@@ -41,24 +41,38 @@ class StocksService(IObserver):
 
 
         # Schedule trading tasks - All times in PST
+        # Clear ATR cache at 5:00 AM PST (before pre-market scan)
+        schedule.every().day.at("05:00").do(self.clear_atr_cache)
+
         # Pre-market scanning at 5:30 AM PST (8:30 AM ET)
         schedule.every().day.at("05:30").do(self.pre_market_scan)
 
         # Opening range calculation - dynamic based on CONFIG_ORB_TIMEFRAME
-        # 15m ORB → 6:45 AM, 30m ORB → 7:00 AM, 60m ORB → 7:30 AM
+        # 5m ORB → 6:35 AM, 15m ORB → 6:45 AM, 30m ORB → 7:00 AM, 60m ORB → 7:30 AM
         orb_timeframe = self.state_manager.get_config_value(CONFIG_ORB_TIMEFRAME)
-        if orb_timeframe == 15:
+        if orb_timeframe == 5:
+            schedule.every().day.at("06:35").do(self.calculate_opening_range)
+        elif orb_timeframe == 15:
             schedule.every().day.at("06:45").do(self.calculate_opening_range)
         elif orb_timeframe == 30:
             schedule.every().day.at("07:00").do(self.calculate_opening_range)
         elif orb_timeframe == 60:
             schedule.every().day.at("07:30").do(self.calculate_opening_range)
         else:
-            raise ValueError(f"Invalid CONFIG_ORB_TIMEFRAME: {orb_timeframe}. Must be 15, 30, or 60")
+            raise ValueError(f"Invalid CONFIG_ORB_TIMEFRAME: {orb_timeframe}. Must be 5, 15, 30, or 60")
 
         # ORB strategy checks - dynamic based on CONFIG_ORB_TIMEFRAME
         # Run on clock-aligned intervals from after opening range until 10:00 AM PST
-        if orb_timeframe == 15:
+        if orb_timeframe == 5:
+            # Check every 5 minutes starting after 6:35 AM until 10:00 AM
+            for hour in range(6, 11):  # 6 AM to 10 AM
+                for minute in range(0, 60, 5):  # Every 5 minutes: 0, 5, 10, ..., 55
+                    if hour == 6 and minute < 40:  # Skip times before 6:40 AM
+                        continue
+                    if hour == 10 and minute > 0:  # Only include 10:00, not 10:05+
+                        break
+                    schedule.every().day.at(f"{hour:02d}:{minute:02d}").do(self.orb_strategy)
+        elif orb_timeframe == 15:
             # Check every 15 minutes starting after 6:45 AM until 10:00 AM
             for hour in range(7, 11):  # 7 AM to 10 AM
                 for minute in [0, 15, 30, 45]:
@@ -90,7 +104,7 @@ class StocksService(IObserver):
         schedule.every(60).seconds.do(self.move_stop_orders)
 
         # Time-based exit checks every minute during market hours
-        schedule.every(60).seconds.do(self.time_based_exits)
+        # schedule.every(60).seconds.do(self.time_based_exits)  # Disabled: Not part of Academic ORB Strategy
 
         # End-of-day position closure at 12:50 PM PST (3:50 PM ET)
         schedule.every().day.at("12:50").do(self.end_of_day_exit)
@@ -166,11 +180,12 @@ class StocksService(IObserver):
         if market_open:
             self.subject.notify({FIELD_TYPE: EVENT_TYPE_MOVE_STOP_ORDER})
 
-    def time_based_exits(self):
-        """Check for time-based exits on stagnant positions"""
-        market_open = self.state_manager.getConfigValue(CONFIG_MARKET_OPEN)
-        if market_open:
-            self.subject.notify({FIELD_TYPE: EVENT_TYPE_TIME_BASED_EXIT})
+    # def time_based_exits(self):
+    #     """Check for time-based exits on stagnant positions"""
+    #     # Disabled: Not part of Academic ORB Strategy
+    #     market_open = self.state_manager.getConfigValue(CONFIG_MARKET_OPEN)
+    #     if market_open:
+    #         self.subject.notify({FIELD_TYPE: EVENT_TYPE_TIME_BASED_EXIT})
 
     def end_of_day_exit(self):
         """Close all positions at end of day and generate daily report"""
@@ -179,6 +194,12 @@ class StocksService(IObserver):
     def smart_connection_check(self):
         """Check IB connection status"""
         self.subject.notify({FIELD_TYPE: EVENT_TYPE_STOCKS_CONNECTION_CHECK})
+
+    def clear_atr_cache(self):
+        """Clear ATR cache daily to prevent memory accumulation"""
+        from src.stocks.services.atr_service import ATRService
+        ATRService.clear_cache()
+        logger.info("ATR cache cleared (daily maintenance)")
 
     def notify(self, observable, *args):
         """Handle start event"""
@@ -218,16 +239,16 @@ def main():
     parser.add_argument("--max-price", required=True, type=float, help="Maximum stock price")
     parser.add_argument("--min-volume", required=True, type=int, help="Minimum daily volume")
     parser.add_argument("--min-pre-market-change", required=True, type=float, help="Minimum pre-market change percentage")
-    parser.add_argument("--stagnation-minutes", required=True, type=int, help="Minutes before position is considered stagnant")
-    parser.add_argument("--initial-stop-loss-ratio", required=True, type=float, help="Initial stop loss ratio")
-    parser.add_argument("--trailing-stop-ratio", required=True, type=float, help="Trailing stop ratio")
-    parser.add_argument("--take-profit-ratio", required=True, type=float, help="Take profit ratio")
+    # Legacy parameters removed (not part of Academic ORB Strategy):
+    # - stagnation-minutes (no time-based exits)
+    # - initial-stop-loss-ratio (uses ATR instead)
+    # - trailing-stop-ratio (uses ATR instead)
+    # - take-profit-ratio (no take-profit targets)
     parser.add_argument("--min-range-pct", required=True, type=float, help="Minimum opening range percentage")
     parser.add_argument("--max-range-pct", required=True, type=float, help="Maximum opening range percentage")
 
-    # Volume analysis parameters
-    parser.add_argument("--volume-lookback-days", required=True, type=int, help="Calendar days for volume analysis")
-    parser.add_argument("--volume-zscore-threshold", required=True, type=float, help="Z-score threshold for volume confirmation")
+    # Relative Volume parameters (per academic paper)
+    parser.add_argument("--volume-lookback-days", required=True, type=int, help="Lookback days for Relative Volume calculation (14 per paper)")
 
     args = parser.parse_args()
 
@@ -254,15 +275,13 @@ def main():
         CONFIG_MAX_PRICE: args.max_price,
         CONFIG_MIN_VOLUME: args.min_volume,
         CONFIG_MIN_PRE_MARKET_CHANGE: args.min_pre_market_change,
-        CONFIG_STAGNATION_THRESHOLD_MINUTES: args.stagnation_minutes,
-        CONFIG_INITIAL_STOP_LOSS_RATIO: args.initial_stop_loss_ratio,
-        CONFIG_TRAILING_STOP_RATIO: args.trailing_stop_ratio,
-        CONFIG_TAKE_PROFIT_RATIO: args.take_profit_ratio,
+        # Legacy parameters removed (not part of Academic ORB Strategy):
+        # CONFIG_STAGNATION_THRESHOLD_MINUTES, CONFIG_INITIAL_STOP_LOSS_RATIO,
+        # CONFIG_TRAILING_STOP_RATIO, CONFIG_TAKE_PROFIT_RATIO
         CONFIG_MIN_RANGE_PCT: args.min_range_pct,
         CONFIG_MAX_RANGE_PCT: args.max_range_pct,
-        # Volume analysis parameters
-        CONFIG_ORB_VOLUME_LOOKBACK_DAYS: args.volume_lookback_days,
-        CONFIG_ORB_VOLUME_ZSCORE_THRESHOLD: args.volume_zscore_threshold
+        # Relative Volume parameters (per academic paper)
+        CONFIG_ORB_VOLUME_LOOKBACK_DAYS: args.volume_lookback_days
     }
 
     client = IBClient(subject, config)

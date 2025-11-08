@@ -150,25 +150,42 @@ CONFIG_TELEGRAM_TOKEN = "telegram_token"
 CONFIG_TELEGRAM_CHAT_ID = "telegram_chat_id"
 CONFIG_TIMEZONE = "timezone"
 
-# Stock trading configuration
-CONFIG_ORB_PERIOD_MINUTES = "orb_period_minutes"
-CONFIG_ORB_TIMEFRAME = "orb_timeframe"  # 15, 30, or 60 minutes
-CONFIG_MIN_RANGE_PCT = "min_range_pct"  # Minimum range as % of price
-CONFIG_MAX_RANGE_PCT = "max_range_pct"  # Maximum range as % of price
-CONFIG_INITIAL_STOP_LOSS_RATIO = "initial_stop_loss_ratio"  # 0.5x of range for initial stop
-CONFIG_TRAILING_STOP_RATIO = "trailing_stop_ratio"  # 0.5x of range
-CONFIG_TAKE_PROFIT_RATIO = "take_profit_ratio"  # 1.5x of range
-CONFIG_STOCK_LIST = "stock_list"  # Static list of symbols
-CONFIG_MAX_POSITIONS = "max_positions"
-CONFIG_STAGNATION_THRESHOLD_MINUTES = "stagnation_threshold_minutes"  # Minutes before position is stagnant
-CONFIG_MIN_PRICE = "min_price"
-CONFIG_MAX_PRICE = "max_price"
-CONFIG_MIN_VOLUME = "min_volume"
-CONFIG_MIN_PRE_MARKET_CHANGE = "min_pre_market_change"
+# === Academic ORB Strategy Configuration ===
+# Based on "A Profitable Day Trading Strategy for The U.S. Equity Market"
+# (Zarattini, Barbon, Aziz 2024 - Swiss Finance Institute Paper No. 24-98)
 
-# Volume analysis configuration for ORB strategy
-CONFIG_ORB_VOLUME_LOOKBACK_DAYS = "orb_volume_lookback_days"  # Calendar days for historical data
-CONFIG_ORB_VOLUME_ZSCORE_THRESHOLD = "orb_volume_zscore_threshold"  # Z-score threshold for significance
+# Opening Range
+CONFIG_ORB_TIMEFRAME = "ORB_PERIOD_MINUTES"  # 5, 15, 30, or 60 minutes (paper: 5 best)
+
+# ATR-Based Risk Management (per paper Section 2.1)
+CONFIG_ATR_PERIOD = "ATR_PERIOD"  # 14-day ATR
+CONFIG_ATR_STOP_MULTIPLIER = "ATR_STOP_MULTIPLIER"  # 10% of ATR for stops
+
+# Stock Filtering - "Stocks in Play" (per paper Section 3 & 4)
+CONFIG_TOP_N_STOCKS = "TOP_N_STOCKS"  # Top 20 by relative volume
+CONFIG_MIN_RELATIVE_VOLUME = "MIN_RELATIVE_VOLUME"  # 100% threshold
+CONFIG_RELATIVE_VOLUME_LOOKBACK = "RELATIVE_VOLUME_LOOKBACK"  # 14-day average
+
+# Basic Filters (per paper Section 2.1)
+CONFIG_MIN_PRICE = "MIN_PRICE"  # Minimum $5
+CONFIG_MAX_PRICE = "MAX_PRICE"  # Effectively unlimited
+CONFIG_MIN_VOLUME = "MIN_VOLUME"  # 1M shares/day minimum
+CONFIG_MIN_ATR = "MIN_ATR"  # Minimum $0.50 ATR
+CONFIG_MIN_PRE_MARKET_CHANGE = "MIN_PRE_MARKET_CHANGE"  # Pre-market change percentage
+
+# Position Management
+CONFIG_MAX_POSITIONS = "MAX_POSITIONS"  # Up to 20 concurrent
+CONFIG_RISK_PERCENTAGE = "RISK_PERCENTAGE"  # 1% risk per trade
+
+# Range Validation
+CONFIG_MIN_RANGE_PCT = "MIN_RANGE_PCT"  # Minimum range as % of price
+CONFIG_MAX_RANGE_PCT = "MAX_RANGE_PCT"  # Maximum range as % of price
+
+# Relative Volume (per academic paper - Section 3)
+CONFIG_ORB_VOLUME_LOOKBACK_DAYS = "VOLUME_LOOKBACK_DAYS"  # 14-day lookback for RV calculation
+
+# Legacy - kept for static stock list (not used in academic strategy)
+CONFIG_STOCK_LIST = "stock_list"
 
 # Volume analysis event
 EVENT_TYPE_VOLUME_ANALYSIS = "EVENT_TYPE_VOLUME_ANALYSIS"

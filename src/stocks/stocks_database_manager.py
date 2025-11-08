@@ -49,18 +49,20 @@ class StocksDatabaseManager(IObserver):
         pass
 
     # Opening Range operations
-    def save_opening_range(self, symbol, date, timeframe_minutes, range_high, range_low, range_size, range_size_pct):
+    def save_opening_range(self, symbol, date, timeframe_minutes, range_high, range_low, range_size, range_size_pct, directional_bias=None, volume=None):
         """
         Save opening range to database
 
         Args:
             symbol: Stock symbol (required)
             date: Date of range (required)
-            timeframe_minutes: Timeframe in minutes - 15, 30, or 60 (required)
+            timeframe_minutes: Timeframe in minutes - 5, 15, 30, or 60 (required)
             range_high: High of opening range (required)
             range_low: Low of opening range (required)
             range_size: Absolute size of range (required)
             range_size_pct: Percentage size of range (required)
+            directional_bias: Opening momentum direction - BULLISH or BEARISH (optional)
+            volume: Total volume during opening range period (optional)
 
         Raises:
             ValueError: If any parameter is None or invalid
@@ -71,8 +73,8 @@ class StocksDatabaseManager(IObserver):
             raise ValueError("date is REQUIRED")
         if timeframe_minutes is None:
             raise ValueError("timeframe_minutes is REQUIRED")
-        if timeframe_minutes not in [15, 30, 60]:
-            raise ValueError("timeframe_minutes must be 15, 30, or 60")
+        if timeframe_minutes not in [5, 15, 30, 60]:
+            raise ValueError("timeframe_minutes must be 5, 15, 30, or 60")
         if range_high is None:
             raise ValueError("range_high is REQUIRED")
         if range_low is None:
@@ -90,6 +92,14 @@ class StocksDatabaseManager(IObserver):
         if range_size_pct <= 0:
             raise ValueError(f"Invalid range_size_pct: {range_size_pct}")
 
+        # Validate directional_bias if provided
+        if directional_bias is not None and directional_bias not in ["BULLISH", "BEARISH"]:
+            raise ValueError(f"directional_bias must be BULLISH or BEARISH, got: {directional_bias}")
+
+        # Validate volume if provided
+        if volume is not None and volume < 0:
+            raise ValueError(f"volume must be non-negative, got: {volume}")
+
         session = self.get_session()
         try:
             # Check if range already exists (unique constraint on symbol, date)
@@ -105,13 +115,20 @@ class StocksDatabaseManager(IObserver):
                 range_high=range_high,
                 range_low=range_low,
                 range_size=range_size,
-                range_size_pct=range_size_pct
+                range_size_pct=range_size_pct,
+                directional_bias=directional_bias,
+                volume=volume
             )
 
             session.add(opening_range)
             session.commit()
 
-            logger.info(f"Opening range saved for {symbol}: ${range_low:.2f}-${range_high:.2f} ({range_size_pct:.1f}%)")
+            log_msg = f"Opening range saved for {symbol}: ${range_low:.2f}-${range_high:.2f} ({range_size_pct:.1f}%)"
+            if directional_bias:
+                log_msg += f", bias: {directional_bias}"
+            if volume:
+                log_msg += f", volume: {volume:,}"
+            logger.info(log_msg)
 
         except Exception as e:
             session.rollback()

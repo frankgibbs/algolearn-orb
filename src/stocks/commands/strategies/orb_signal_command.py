@@ -1,7 +1,8 @@
 from src.core.command import Command
 from src.core.constants import *
 from src.stocks.services.stocks_strategy_service import StocksStrategyService
-from src.stocks.services.volume_analysis_service import VolumeAnalysisService
+from src.stocks.services.atr_service import ATRService
+from src.stocks.services.relative_volume_service import RelativeVolumeService
 from src.stocks.stocks_database_manager import StocksDatabaseManager
 from src.core.ibclient import IBClient
 from src import logger
@@ -11,8 +12,16 @@ import pandas as pd
 
 class ORBSignalCommand(Command):
     """
-    Opening Range Breakout Signal Command
-    Detects breakouts and publishes EVENT_TYPE_OPEN_POSITION signals for execution
+    Opening Range Breakout Signal Command - Academic ORB Strategy
+
+    Enhanced implementation based on "A Profitable Day Trading Strategy for The U.S. Equity Market"
+    (Zarattini, Barbon, Aziz 2024 - Swiss Finance Institute Paper No. 24-98)
+
+    Key enhancements:
+    - Directional bias filtering: Only long on BULLISH bias, only short on BEARISH bias
+    - ATR-based stops: Uses 10% of 14-day ATR instead of range-based stops
+    - Relative volume filtering: Only trades top N "Stocks in Play"
+    - Detects breakouts and publishes EVENT_TYPE_OPEN_POSITION signals for execution
     """
 
     def execute(self, event):
@@ -37,6 +46,7 @@ class ORBSignalCommand(Command):
         # Initialize services
         strategy_service = StocksStrategyService(self.application_context)
         database_manager = StocksDatabaseManager(self.application_context)
+        relative_volume_service = RelativeVolumeService(self.application_context)
         # Use the IBClient instance from application context (maintains connection)
         ib_client = self.application_context.client
 
@@ -48,12 +58,42 @@ class ORBSignalCommand(Command):
             logger.info("No candidates found from today's scan - skipping ORB signal detection")
             return
 
-        logger.info(f"Analyzing {len(candidates)} stocks from scan for ORB breakout signals")
+        logger.info(f"Found {len(candidates)} candidates from pre-market scan")
 
-        # Check each stock for breakout conditions
-        signals_generated = 0
+        # Get opening ranges for all candidates to extract volume data
+        opening_ranges = database_manager.get_opening_ranges_by_date(today)
+        if not opening_ranges:
+            logger.info("No opening ranges calculated yet - run /calc-range first")
+            return
+
+        # Build candidate dict with volume from opening ranges
+        candidates_with_volume = []
         for candidate in candidates:
-            symbol = candidate.symbol
+            # Find matching opening range for this symbol
+            opening_range = next((r for r in opening_ranges if r.symbol == candidate.symbol), None)
+            if opening_range and opening_range.volume:
+                candidates_with_volume.append({
+                    'symbol': candidate.symbol,
+                    'volume': opening_range.volume
+                })
+
+        if not candidates_with_volume:
+            logger.info("No candidates with calculated opening range volumes yet")
+            return
+
+        # Rank by relative volume and filter to top N "Stocks in Play"
+        try:
+            top_candidates = relative_volume_service.rank_by_relative_volume(candidates_with_volume)
+            logger.info(f"Filtered to top {len(top_candidates)} stocks by relative volume (Stocks in Play)")
+        except (ValueError, RuntimeError) as e:
+            logger.warning(f"Could not filter by relative volume: {e}")
+            # Fall back to all candidates if relative volume filtering fails
+            top_candidates = [{'symbol': c.symbol} for c in candidates]
+
+        # Check each stock in top N for breakout conditions
+        signals_generated = 0
+        for candidate_data in top_candidates:
+            symbol = candidate_data['symbol']
             if self._analyze_stock_for_breakout(symbol, strategy_service, ib_client, now):
                 signals_generated += 1
 
@@ -163,13 +203,9 @@ class ORBSignalCommand(Command):
         breakout_signal = self._check_breakout_signal(opening_range, previous_close, symbol)
 
         if breakout_signal['signal'] != 'NONE':
-            # Check volume confirmation
-            volume_confirmed = self._check_volume_confirmation(symbol, previous_bar, timeframe_minutes, ib_client)
-
-            if not volume_confirmed:
-                # Volume confirmation failed - skip the trade
-                logger.info(f"{symbol} - Volume confirmation failed, skipping trade")
-                return False
+            # Academic ORB Strategy: Volume filtering via Relative Volume already done during
+            # candidate selection (Top 20 stocks with RV >= 100%). No additional volume
+            # confirmation on breakout bar per academic paper methodology.
 
             # Check position limits before generating signal
             if not self._check_position_limits():
@@ -204,6 +240,10 @@ class ORBSignalCommand(Command):
         Check if previous candle closed above/below opening range
         Uses real-time bid/ask for accurate entry prices
 
+        Academic Strategy Enhancement: Applies directional bias filtering
+        - Only LONG on BULLISH bias (open > previous close)
+        - Only SHORT on BEARISH bias (open < previous close)
+
         Args:
             opening_range: Opening range record from database
             previous_close: Previous candle close price
@@ -212,16 +252,20 @@ class ORBSignalCommand(Command):
         Returns:
             Dict with signal info: {'signal': 'LONG'|'SHORT'|'NONE', 'entry_price': float, ...}
         """
-        # Get take profit ratio from config
-        take_profit_ratio = self.state_manager.get_config_value(CONFIG_TAKE_PROFIT_RATIO)
-        if take_profit_ratio is None:
-            raise ValueError("CONFIG_TAKE_PROFIT_RATIO is REQUIRED")
-
         # Access IBClient directly from base class
         ib_client = self.application_context.client
 
         if previous_close > opening_range.range_high:
-            # Breakout above range - LONG signal
+            # Breakout above range - potential LONG signal
+
+            # Check directional bias - only long on BULLISH bias
+            if opening_range.directional_bias != "BULLISH":
+                logger.info(
+                    f"{symbol} - Breakout above range but directional bias is "
+                    f"{opening_range.directional_bias}, not BULLISH - skipping LONG"
+                )
+                return {'signal': 'NONE'}
+
             # MUST get real-time ASK price for buying
             contract = ib_client.get_stock_contract(symbol)
             quote = ib_client.get_stock_market_data(contract)
@@ -231,17 +275,26 @@ class ORBSignalCommand(Command):
                 return {'signal': 'NONE'}  # Don't trade without accurate pricing
 
             entry_price = round(quote['ask'], 2)
-            logger.info(f"{symbol} LONG: Using real-time ASK ${entry_price}")
+            logger.info(f"{symbol} LONG: Using real-time ASK ${entry_price} (BULLISH bias confirmed)")
 
             return {
                 'signal': 'LONG',
                 'entry_price': entry_price,
-                'stop_loss': self._calculate_stop_loss('LONG', entry_price, opening_range),
-                'take_profit': round(entry_price + (take_profit_ratio * opening_range.range_size), 2),
+                'stop_loss': self._calculate_atr_stop_loss('LONG', entry_price, symbol),
+                'take_profit': None,  # Academic strategy uses EOD exit instead of take profit
                 'range_size': opening_range.range_size
             }
         elif previous_close < opening_range.range_low:
-            # Breakout below range - SHORT signal
+            # Breakout below range - potential SHORT signal
+
+            # Check directional bias - only short on BEARISH bias
+            if opening_range.directional_bias != "BEARISH":
+                logger.info(
+                    f"{symbol} - Breakout below range but directional bias is "
+                    f"{opening_range.directional_bias}, not BEARISH - skipping SHORT"
+                )
+                return {'signal': 'NONE'}
+
             # MUST get real-time BID price for selling
             contract = ib_client.get_stock_contract(symbol)
             quote = ib_client.get_stock_market_data(contract)
@@ -251,52 +304,73 @@ class ORBSignalCommand(Command):
                 return {'signal': 'NONE'}  # Don't trade without accurate pricing
 
             entry_price = round(quote['bid'], 2)
-            logger.info(f"{symbol} SHORT: Using real-time BID ${entry_price}")
+            logger.info(f"{symbol} SHORT: Using real-time BID ${entry_price} (BEARISH bias confirmed)")
 
             return {
                 'signal': 'SHORT',
                 'entry_price': entry_price,
-                'stop_loss': self._calculate_stop_loss('SHORT', entry_price, opening_range),
-                'take_profit': round(entry_price - (take_profit_ratio * opening_range.range_size), 2),
+                'stop_loss': self._calculate_atr_stop_loss('SHORT', entry_price, symbol),
+                'take_profit': None,  # Academic strategy uses EOD exit instead of take profit
                 'range_size': opening_range.range_size
             }
         else:
             # No breakout
             return {'signal': 'NONE'}
 
-    def _calculate_stop_loss(self, signal_direction, entry_price, opening_range):
+    def _calculate_atr_stop_loss(self, signal_direction, entry_price, symbol):
         """
-        Calculate stop loss based on direction and entry price
+        Calculate ATR-based stop loss (Academic ORB Strategy)
+
+        Uses 10% of 14-day ATR as stop distance per academic paper
 
         Args:
             signal_direction: 'LONG' or 'SHORT'
             entry_price: The entry price for the position
-            opening_range: Opening range data
+            symbol: Stock symbol for ATR calculation
 
         Returns:
             float: Stop loss price on correct side of entry
+
+        Raises:
+            ValueError: If parameters invalid or ATR calculation fails
         """
-        # Get initial stop loss ratio from config
-        initial_stop_ratio = self.state_manager.get_config_value(CONFIG_INITIAL_STOP_LOSS_RATIO)
-        if initial_stop_ratio is None:
-            raise ValueError("CONFIG_INITIAL_STOP_LOSS_RATIO is REQUIRED")
+        if not symbol:
+            raise ValueError("symbol is REQUIRED")
+        if signal_direction not in ['LONG', 'SHORT']:
+            raise ValueError(f"signal_direction must be LONG or SHORT, got: {signal_direction}")
+        if entry_price is None or entry_price <= 0:
+            raise ValueError(f"entry_price must be positive, got: {entry_price}")
 
-        stop_distance = opening_range.range_size * initial_stop_ratio  # Use config ratio
+        # Initialize ATR service
+        atr_service = ATRService(self.application_context)
 
-        # INVERTED LOGIC TO FIX BUG - stops were on wrong side
+        # Get ATR for symbol (uses 14-day ATR from config)
+        atr_value = atr_service.get_atr(symbol, use_yesterday=True)
+
+        # Calculate stop distance (10% of ATR per config)
+        stop_distance = atr_service.calculate_stop_distance(atr_value)
+
+        logger.info(
+            f"{symbol} - ATR-based stop: ATR=${atr_value:.2f}, "
+            f"Stop distance=${stop_distance:.2f} (10% ATR)"
+        )
+
+        # Calculate stop price
         if signal_direction == 'LONG':
-            # For LONG, stop must be BELOW entry - INVERTED: subtract from entry
+            # For LONG, stop must be BELOW entry
             stop_loss = round(entry_price - stop_distance, 2)
             # Validate stop is below entry
             if stop_loss >= entry_price:
                 raise ValueError(f"LONG stop {stop_loss} must be below entry {entry_price}")
+            logger.info(f"{symbol} LONG stop: ${stop_loss:.2f} (entry ${entry_price:.2f} - stop distance ${stop_distance:.2f})")
             return stop_loss
         else:  # SHORT
-            # For SHORT, stop must be ABOVE entry - INVERTED: add to entry
+            # For SHORT, stop must be ABOVE entry
             stop_loss = round(entry_price + stop_distance, 2)
             # Validate stop is above entry
             if stop_loss <= entry_price:
                 raise ValueError(f"SHORT stop {stop_loss} must be above entry {entry_price}")
+            logger.info(f"{symbol} SHORT stop: ${stop_loss:.2f} (entry ${entry_price:.2f} + stop distance ${stop_distance:.2f})")
             return stop_loss
 
     def _find_first_breakout_bar(self, bars_df, opening_range):
@@ -378,7 +452,7 @@ class ORBSignalCommand(Command):
             "quantity": quantity,
             "entry_price": breakout_signal['entry_price'],
             "stop_loss": breakout_signal['stop_loss'],
-            "take_profit": breakout_signal['take_profit'],
+            "take_profit": breakout_signal['take_profit'],  # May be None for EOD exit strategy
             "range_size": breakout_signal['range_size'],
             "opening_range_id": opening_range.id,
             "reason": f"ORB breakout {breakout_signal['signal'].lower()} of range"
@@ -390,14 +464,25 @@ class ORBSignalCommand(Command):
 
         logger.info(f"🚀 ORB BREAKOUT Published: {position_data['action']} {symbol} @ {breakout_signal['entry_price']}")
 
-        # Send Telegram notification
-        self.state_manager.sendTelegramMessage(
-            f"🚀 ORB BREAKOUT: {position_data['action']} {symbol}\n"
-            f"Entry: ${breakout_signal['entry_price']:.2f}\n"
-            f"Stop: ${breakout_signal['stop_loss']:.2f}\n"
-            f"Target: ${breakout_signal['take_profit']:.2f}\n"
-            f"Qty: {quantity} shares"
-        )
+        # Send Telegram notification (academic strategy uses EOD exit instead of take profit)
+        if breakout_signal['take_profit'] is not None:
+            telegram_msg = (
+                f"🚀 ORB BREAKOUT: {position_data['action']} {symbol}\n"
+                f"Entry: ${breakout_signal['entry_price']:.2f}\n"
+                f"Stop: ${breakout_signal['stop_loss']:.2f}\n"
+                f"Target: ${breakout_signal['take_profit']:.2f}\n"
+                f"Qty: {quantity} shares"
+            )
+        else:
+            telegram_msg = (
+                f"🚀 ORB BREAKOUT: {position_data['action']} {symbol}\n"
+                f"Entry: ${breakout_signal['entry_price']:.2f}\n"
+                f"Stop: ${breakout_signal['stop_loss']:.2f} (ATR-based)\n"
+                f"Exit: EOD if profitable\n"
+                f"Qty: {quantity} shares"
+            )
+
+        self.state_manager.sendTelegramMessage(telegram_msg)
 
     def _is_valid_trading_time(self, now):
         """
@@ -457,63 +542,3 @@ class ORBSignalCommand(Command):
         else:
             logger.warning(f"Unsupported ORB timeframe: {timeframe_minutes} minutes")
             return False
-
-    def _check_volume_confirmation(self, symbol, current_bar, timeframe_minutes, ib_client):
-        """
-        Check if volume meets Z-Score threshold for breakout confirmation
-
-        Args:
-            symbol: Stock symbol (required)
-            current_bar: Current bar data (required)
-            timeframe_minutes: Bar timeframe in minutes (required)
-            ib_client: IB client instance (required)
-
-        Returns:
-            Boolean indicating if volume is confirmed
-
-        Raises:
-            ValueError: If configuration is missing or invalid
-        """
-        if symbol is None:
-            raise ValueError("symbol is REQUIRED")
-        if current_bar is None:
-            raise ValueError("current_bar is REQUIRED")
-        if timeframe_minutes is None or timeframe_minutes <= 0:
-            raise ValueError("timeframe_minutes is REQUIRED and must be positive")
-        if ib_client is None:
-            raise ValueError("ib_client is REQUIRED")
-
-        # Get volume configuration
-        lookback_days = self.state_manager.get_config_value(CONFIG_ORB_VOLUME_LOOKBACK_DAYS)
-        if lookback_days is None or lookback_days <= 0:
-            raise ValueError("CONFIG_ORB_VOLUME_LOOKBACK_DAYS is REQUIRED and must be positive")
-
-        zscore_threshold = self.state_manager.get_config_value(CONFIG_ORB_VOLUME_ZSCORE_THRESHOLD)
-        if zscore_threshold is None or zscore_threshold <= 0:
-            raise ValueError("CONFIG_ORB_VOLUME_ZSCORE_THRESHOLD is REQUIRED and must be positive")
-
-        # Get extended historical data for volume analysis using day-based duration
-        bars_df_extended = ib_client.get_stock_bars_extended(
-            symbol=symbol,
-            duration_days=lookback_days,
-            bar_size=f"{timeframe_minutes} mins"
-        )
-
-        # Initialize volume service and calculate Z-Score
-        volume_service = VolumeAnalysisService(self.application_context)
-        volume_zscore = volume_service.calculate_volume_zscore(
-            bars_df=bars_df_extended,
-            current_bar=current_bar,
-            lookback_days=lookback_days,
-            timeframe_minutes=timeframe_minutes
-        )
-
-        # Check if volume is statistically significant
-        is_significant = volume_service.is_volume_significant(volume_zscore, zscore_threshold)
-
-        if is_significant:
-            logger.info(f"{symbol} - ✅ Volume confirmed: Z-Score={volume_zscore:.2f}σ (threshold: {zscore_threshold}σ)")
-        else:
-            logger.info(f"{symbol} - ❌ Volume rejected: Z-Score={volume_zscore:.2f}σ below threshold {zscore_threshold}σ")
-
-        return is_significant

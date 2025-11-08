@@ -9,8 +9,16 @@ from prettytable import PrettyTable
 
 class VolumeAnalysisCommand(Command):
     """
-    Analyze volume for a specific symbol showing historical data and Z-Score calculation
-    Usage: /va AAPL
+    DEPRECATED: Z-Score Volume Analysis Command
+
+    This command is NOT part of the Academic ORB Strategy (ssrn-4729284.pdf).
+    The academic paper uses ONLY Relative Volume (RV >= 100% + Top 20) filtering,
+    with NO Z-score validation on breakout bars.
+
+    Kept for historical reference and manual analysis only.
+    This command is disabled in stocks_trade_manager.py.
+
+    Usage: /va AAPL (if manually enabled)
     """
 
     def execute(self, event):

@@ -3,7 +3,16 @@ import numpy as np
 import pytz
 
 class VolumeAnalysisService:
-    """Service for volume analysis and statistical calculations"""
+    """
+    DEPRECATED: Z-Score Volume Analysis Service
+
+    This service is NOT part of the Academic ORB Strategy (ssrn-4729284.pdf).
+    The academic paper uses ONLY Relative Volume (RV >= 100% + Top 20) filtering,
+    with NO Z-score validation on breakout bars.
+
+    Kept for historical reference and potential analysis use only.
+    See RelativeVolumeService for the correct academic methodology.
+    """
 
     def __init__(self, application_context):
         """

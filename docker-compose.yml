@@ -10,6 +10,7 @@ services:
       - "8005:8003"  # MCP API
       - "8006:8080"  # Dashboard
     environment:
+      # Container settings
       - TZ=America/Los_Angeles
       - HOST=paper
       - PORT=4004
@@ -17,21 +18,38 @@ services:
       - ACCOUNT=DU123456
       - TELEGRAM_TOKEN=1764833292:AAEZWcMIdKiLVGZRjZpkm0rAHJAKjtZyMpA
       - TELEGRAM_CHAT_ID=1780930883
-      - ORB_PERIOD_MINUTES=30
-      - RISK_PERCENTAGE=5
-      - MAX_POSITIONS=10
+
+      # === ACADEMIC ORB STRATEGY SETTINGS (per paper) ===
+
+      # Opening Range - 5-minute ORB (paper uses 5, 15, 30, 60; 5-min best)
+      - ORB_PERIOD_MINUTES=5
+
+      # ATR Configuration (per paper Section 2.1)
+      - ATR_PERIOD=14
+      - ATR_STOP_MULTIPLIER=0.10
+
+      # Stock Filtering - "Stocks in Play" (per paper Section 3 & 4)
+      - TOP_N_STOCKS=20
+      - MIN_RELATIVE_VOLUME=1.0
+      - RELATIVE_VOLUME_LOOKBACK=14
+
+      # Basic Filters (per paper Section 2.1)
       - MIN_PRICE=5.00
-      - MAX_PRICE=100.00
-      - MIN_VOLUME=100000
-      - MIN_PRE_MARKET_CHANGE=2.0
-      - STAGNATION_MINUTES=240
-      - INITIAL_STOP_LOSS_RATIO=0.5
-      - TRAILING_STOP_RATIO=0.25
-      - TAKE_PROFIT_RATIO=1.5
+      - MAX_PRICE=1000.00
+      - MIN_VOLUME=1000000
+      - MIN_ATR=0.50
+      - MIN_PRE_MARKET_CHANGE=0.0  # Academic strategy: no pre-market requirement
+
+      # Position Management
+      - RISK_PERCENTAGE=1
+      - MAX_POSITIONS=20
+
+      # Range Validation
       - MIN_RANGE_PCT=0.5
-      - MAX_RANGE_PCT=3.0
-      - VOLUME_LOOKBACK_DAYS=20
-      - VOLUME_ZSCORE_THRESHOLD=1.0
+      - MAX_RANGE_PCT=10.0
+
+      # Relative Volume (per academic paper - 14-day lookback for RV calculation)
+      - VOLUME_LOOKBACK_DAYS=14
     networks:
       - algolearn_network
 

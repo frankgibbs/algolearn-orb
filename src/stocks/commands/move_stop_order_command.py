@@ -1,11 +1,21 @@
 from src.core.command import Command
 from src.core.constants import *
+from src.stocks.services.atr_service import ATRService
+from src.stocks.services.position_service import PositionService
 from src import logger
 import pytz
 from datetime import datetime
 
 class MoveStopOrderCommand(Command):
-    """Handle trailing stop order modifications"""
+    """
+    Handle trailing stop order modifications - Academic ORB Strategy
+
+    Enhanced for "A Profitable Day Trading Strategy for The U.S. Equity Market"
+    (Zarattini, Barbon, Aziz 2024):
+    - Uses ATR-based trailing stops instead of range-based
+    - Trails using 10% of 14-day ATR
+    - Always active (no profit threshold to activate)
+    """
 
     def execute(self, event):
         """
@@ -71,7 +81,10 @@ class MoveStopOrderCommand(Command):
 
     def _calculate_new_stop_price(self, position, current_price):
         """
-        Calculate new trailing stop price if conditions are met
+        Calculate new ATR-based trailing stop price if conditions are met
+
+        Academic Strategy: Uses 10% of 14-day ATR for trailing distance
+        Always active (no profit threshold), trails from entry
 
         Args:
             position: Position record (required)
@@ -85,73 +98,54 @@ class MoveStopOrderCommand(Command):
         """
         if position is None:
             raise ValueError("position is REQUIRED")
-        if current_price is None:
-            raise ValueError("current_price is REQUIRED")
+        if current_price is None or current_price <= 0:
+            raise ValueError(f"current_price must be positive, got: {current_price}")
 
-        # Get trailing stop ratio from config
-        trailing_ratio = self.state_manager.get_config_value(CONFIG_TRAILING_STOP_RATIO)
+        # Initialize ATR service
+        atr_service = ATRService(self.application_context)
 
-        # If not trailing yet, check if take profit level reached
-        if not position.stop_moved:
-            if self._should_activate_trailing(position, current_price):
-                # Activate trailing stop
-                if position.direction == 'LONG':
-                    new_stop = current_price - (position.range_size * trailing_ratio)
-                else:  # SHORT
-                    new_stop = current_price + (position.range_size * trailing_ratio)
+        # Get ATR for this symbol
+        try:
+            atr_value = atr_service.get_atr(position.symbol, use_yesterday=True)
+            stop_distance = atr_service.calculate_stop_distance(atr_value)
+        except (ValueError, RuntimeError) as e:
+            logger.warning(f"Could not calculate ATR for {position.symbol}: {e}")
+            return None
 
-                logger.info(f"Activating trailing stop for {position.symbol} at ${new_stop:.2f}")
-                return round(new_stop, 2)
-        else:
-            # Already trailing, check if we can move stop further
-            current_stop = position.trailing_stop_price  # Always populated now, no fallback needed
-
-            if position.direction == 'LONG':
-                potential_stop = current_price - (position.range_size * trailing_ratio)
-                if potential_stop > current_stop:
-                    logger.info(f"Moving trailing stop higher for {position.symbol}: ${current_stop:.2f} → ${potential_stop:.2f}")
-                    return round(potential_stop, 2)
-            else:  # SHORT
-                potential_stop = current_price + (position.range_size * trailing_ratio)
-                if potential_stop < current_stop:
-                    logger.info(f"Moving trailing stop lower for {position.symbol}: ${current_stop:.2f} → ${potential_stop:.2f}")
-                    return round(potential_stop, 2)
-
-        return None
-
-    def _should_activate_trailing(self, position, current_price):
-        """
-        Check if profit level has been reached to activate trailing
-        Uses CONFIG_TRAILING_STOP_RATIO to determine activation level
-
-        Args:
-            position: Position record (required)
-            current_price: Current market price (required)
-
-        Returns:
-            Boolean indicating if trailing should be activated
-
-        Raises:
-            ValueError: If any parameter is None or config missing
-        """
-        if position is None:
-            raise ValueError("position is REQUIRED")
-        if current_price is None:
-            raise ValueError("current_price is REQUIRED")
-
-        # Get trailing ratio to determine activation level
-        trailing_ratio = self.state_manager.get_config_value(CONFIG_TRAILING_STOP_RATIO)
-        if trailing_ratio is None:
-            raise ValueError("CONFIG_TRAILING_STOP_RATIO is REQUIRED")
-
+        # Calculate potential new stop based on ATR
         if position.direction == 'LONG':
-            # Activate when profit reaches trailing_ratio × range (e.g., 0.5x)
-            activation_price = position.entry_price + (position.range_size * trailing_ratio)
-            return current_price >= activation_price
+            # For LONG, trail below current price by ATR distance
+            potential_stop = current_price - stop_distance
         else:  # SHORT
-            # Activate when profit reaches trailing_ratio × range
-            activation_price = position.entry_price - (position.range_size * trailing_ratio)
-            return current_price <= activation_price
+            # For SHORT, trail above current price by ATR distance
+            potential_stop = current_price + stop_distance
+
+        potential_stop = round(potential_stop, 2)
+
+        # Get current stop (either initial stop or already-moved trailing stop)
+        current_stop = position.trailing_stop_price if position.stop_moved else position.stop_loss
+
+        # Only move stop in favorable direction (tighter, never looser)
+        if position.direction == 'LONG':
+            # For LONG, only move stop UP (higher)
+            if potential_stop > current_stop:
+                logger.info(
+                    f"{position.symbol} LONG trailing: ${current_stop:.2f} → ${potential_stop:.2f} "
+                    f"(ATR-based, distance: ${stop_distance:.2f})"
+                )
+                return potential_stop
+        else:  # SHORT
+            # For SHORT, only move stop DOWN (lower)
+            if potential_stop < current_stop:
+                logger.info(
+                    f"{position.symbol} SHORT trailing: ${current_stop:.2f} → ${potential_stop:.2f} "
+                    f"(ATR-based, distance: ${stop_distance:.2f})"
+                )
+                return potential_stop
+
+        # No improvement in stop position
+        logger.debug(f"{position.symbol} - No stop movement (potential: ${potential_stop:.2f}, current: ${current_stop:.2f})")
+        return None
 
     def _move_stop_order(self, position, new_stop_price):
         """
@@ -184,10 +178,8 @@ class MoveStopOrderCommand(Command):
             )
 
             # Calculate locked P&L (worst case exit at new stop)
-            if position.direction == 'LONG':
-                locked_pnl = (new_stop_price - position.entry_price) * position.shares
-            else:  # SHORT
-                locked_pnl = (position.entry_price - new_stop_price) * position.shares
+            position_service = PositionService(self.application_context)
+            locked_pnl = position_service.calculate_pnl(position, new_stop_price)
 
             # Send notification with locked value
             action = "🔼 Raised" if position.direction == 'LONG' else "🔽 Lowered"
