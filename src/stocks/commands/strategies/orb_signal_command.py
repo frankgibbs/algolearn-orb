@@ -277,11 +277,15 @@ class ORBSignalCommand(Command):
             entry_price = round(quote['ask'], 2)
             logger.info(f"{symbol} LONG: Using real-time ASK ${entry_price} (BULLISH bias confirmed)")
 
+            # Calculate dummy take_profit (2x range size) to satisfy validation
+            # Note: take_profit is not used for exits (Academic ORB uses EOD exit only)
+            take_profit = entry_price + (opening_range.range_size * 2)
+
             return {
                 'signal': 'LONG',
                 'entry_price': entry_price,
                 'stop_loss': self._calculate_atr_stop_loss('LONG', entry_price, symbol),
-                'take_profit': None,  # Academic strategy uses EOD exit instead of take profit
+                'take_profit': take_profit,
                 'range_size': opening_range.range_size
             }
         elif previous_close < opening_range.range_low:
@@ -306,11 +310,15 @@ class ORBSignalCommand(Command):
             entry_price = round(quote['bid'], 2)
             logger.info(f"{symbol} SHORT: Using real-time BID ${entry_price} (BEARISH bias confirmed)")
 
+            # Calculate dummy take_profit (2x range size) to satisfy validation
+            # Note: take_profit is not used for exits (Academic ORB uses EOD exit only)
+            take_profit = entry_price - (opening_range.range_size * 2)
+
             return {
                 'signal': 'SHORT',
                 'entry_price': entry_price,
                 'stop_loss': self._calculate_atr_stop_loss('SHORT', entry_price, symbol),
-                'take_profit': None,  # Academic strategy uses EOD exit instead of take profit
+                'take_profit': take_profit,
                 'range_size': opening_range.range_size
             }
         else:

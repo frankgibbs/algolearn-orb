@@ -18,9 +18,10 @@ from src.core.constants import (
     CONFIG_TOP_N_STOCKS
 )
 from src.stocks.models.opening_range import OpeningRange
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from typing import List, Dict, Optional
 from sqlalchemy import func
+import pytz
 
 
 class RelativeVolumeService:
@@ -41,6 +42,7 @@ class RelativeVolumeService:
 
         self.state_manager = application_context.state_manager
         self.database_manager = application_context.database_manager
+        self.client = application_context.client
         self.application_context = application_context
 
     def calculate_relative_volume(self, symbol: str, current_volume: int) -> float:
@@ -106,43 +108,99 @@ class RelativeVolumeService:
 
     def _get_historical_volumes(self, symbol: str, lookback_days: int) -> List[int]:
         """
-        Get historical opening range volumes from database
+        Get historical opening range volumes from IB real-time bars
+
+        Fetches historical 5-minute bars and extracts opening range volume for each day.
+        Opening range is the first 5-minute bar after market open (6:30 AM PST / 9:30 AM ET).
 
         Args:
             symbol: Stock symbol
-            lookback_days: Number of days to look back
+            lookback_days: Number of trading days to look back (typically 14)
 
         Returns:
-            List of volume values (may be empty if no data or volume field not yet added)
+            List of opening range volume values for each trading day
+
+        Raises:
+            RuntimeError: If unable to fetch bars from IB or insufficient data
+            TimeoutError: If IB request times out
         """
-        # Calculate date range
-        end_date = datetime.now().date()
-        start_date = end_date - timedelta(days=lookback_days)
+        # Fetch enough calendar days to ensure we get lookback_days of trading days
+        # Use ~1.5x to account for weekends and holidays
+        calendar_days = int(lookback_days * 1.5) + 3
 
-        session = self.database_manager.get_session()
-        try:
-            # Query opening ranges for this symbol in the date range
-            ranges = session.query(OpeningRange).filter(
-                OpeningRange.symbol == symbol,
-                OpeningRange.date >= start_date,
-                OpeningRange.date < end_date
-            ).all()
+        # Fetch 5-minute historical bars from IB (client will raise on errors)
+        bars = self.client.get_stock_bars_extended(
+            symbol=symbol,
+            duration_days=calendar_days,
+            bar_size="5 mins",
+            timeout=30
+        )
 
-            # Extract volumes (handle case where volume field might not exist yet)
-            volumes = []
-            for range_obj in ranges:
-                if hasattr(range_obj, 'volume') and range_obj.volume is not None:
-                    volumes.append(range_obj.volume)
-
-            logger.debug(
-                f"Found {len(volumes)} historical volume entries for {symbol} "
-                f"({start_date} to {end_date})"
+        if bars is None or bars.empty:
+            raise RuntimeError(
+                f"No historical bars received from IB for {symbol} "
+                f"(requested {calendar_days} days of 5-minute bars)"
             )
 
-            return volumes
+        logger.debug(f"Fetched {len(bars)} 5-minute bars for {symbol} ({calendar_days} days)")
 
-        finally:
-            session.close()
+        # Group bars by date and extract opening range volume for each day
+        # IB returns timezone-NAIVE bars at 9:30 AM (ET market time)
+        eastern_tz = pytz.timezone('US/Eastern')
+        pacific_tz = pytz.timezone('US/Pacific')
+        volumes_by_date = {}
+
+        for idx, row in bars.iterrows():
+            bar_time = row['date']
+
+            # IB returns naive timestamps - localize as ET first, then convert to PST
+            if bar_time.tzinfo is None:
+                bar_time = eastern_tz.localize(bar_time)  # 9:30 AM → 9:30 AM ET
+            bar_time = bar_time.astimezone(pacific_tz)  # 9:30 AM ET → 6:30 AM PST
+
+            # Extract date
+            bar_date = bar_time.date()
+
+            # Market opens at 6:30 AM PST (9:30 AM ET)
+            market_open_pst = pacific_tz.localize(
+                datetime.combine(bar_date, time(hour=6, minute=30))
+            )
+
+            # Check if this is the opening range bar (first bar at or after 6:30 AM PST)
+            if bar_time >= market_open_pst and bar_time < market_open_pst + timedelta(minutes=5):
+                # This is the opening 5-minute bar
+                volume = int(row['volume'])
+
+                # Only store if we don't already have this date (take first occurrence)
+                if bar_date not in volumes_by_date:
+                    volumes_by_date[bar_date] = volume
+                    logger.debug(
+                        f"{symbol} opening range volume on {bar_date}: {volume:,} "
+                        f"(bar time: {bar_time.strftime('%Y-%m-%d %H:%M:%S %Z')})"
+                    )
+
+        if not volumes_by_date:
+            raise RuntimeError(
+                f"Could not extract opening range volumes for {symbol} - "
+                f"no bars found at market open (6:30 AM PST) in {len(bars)} bars"
+            )
+
+        # Sort by date and extract volumes
+        sorted_dates = sorted(volumes_by_date.keys(), reverse=True)  # Most recent first
+        volumes = [volumes_by_date[date] for date in sorted_dates[:lookback_days]]
+
+        if len(volumes) < lookback_days:
+            raise RuntimeError(
+                f"Insufficient trading history for {symbol}: "
+                f"found {len(volumes)} days, need {lookback_days} days"
+            )
+
+        logger.debug(
+            f"Extracted {len(volumes)} opening range volumes for {symbol} "
+            f"(requested {lookback_days} days)"
+        )
+
+        return volumes
 
     def rank_by_relative_volume(
         self,

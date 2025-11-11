@@ -149,9 +149,18 @@ class CalculateOpeningRangeCommand(Command):
         bar_tz = first_bar_time.tzinfo
 
         # Define market open time for today in ET timezone
-        # Use date from first bar to handle potential date issues
-        market_date = first_bar_time.date()
-        market_open_et = first_bar_time.replace(hour=9, minute=30, second=0, microsecond=0)
+        # CRITICAL: Use actual current date (now.date()), not first bar's date
+        # IB may return stale data from previous trading day (e.g., Friday data on Monday morning)
+        market_date = now.date()
+        market_open_et = first_bar_time.replace(
+            year=market_date.year,
+            month=market_date.month,
+            day=market_date.day,
+            hour=9,
+            minute=30,
+            second=0,
+            microsecond=0
+        )
 
         # Define opening range end time based on timeframe
         opening_range_end_et = market_open_et.replace(
@@ -160,7 +169,10 @@ class CalculateOpeningRangeCommand(Command):
             microsecond=0
         )
 
-        logger.info(f"Looking for opening bar between {market_open_et} and {opening_range_end_et}")
+        logger.info(
+            f"Looking for opening bar on {market_date.strftime('%Y-%m-%d')} "
+            f"between {market_open_et} and {opening_range_end_et}"
+        )
 
         # Find first bar that starts at or after market open
         opening_bar = None

@@ -249,6 +249,14 @@ def main():
 
     # Relative Volume parameters (per academic paper)
     parser.add_argument("--volume-lookback-days", required=True, type=int, help="Lookback days for Relative Volume calculation (14 per paper)")
+    parser.add_argument("--top-n-stocks", required=True, type=int, help="Top N stocks by relative volume (20 per paper)")
+    parser.add_argument("--min-relative-volume", required=True, type=float, help="Minimum relative volume threshold (100% per paper)")
+    parser.add_argument("--relative-volume-lookback", required=True, type=int, help="Lookback days for relative volume average (14 per paper)")
+
+    # ATR parameters (per academic paper)
+    parser.add_argument("--atr-period", required=True, type=int, help="ATR period in days (14 per paper)")
+    parser.add_argument("--atr-stop-multiplier", required=True, type=float, help="ATR stop multiplier (0.10 = 10% per paper)")
+    parser.add_argument("--min-atr", required=True, type=float, help="Minimum ATR value for scan filtering")
 
     args = parser.parse_args()
 
@@ -281,7 +289,14 @@ def main():
         CONFIG_MIN_RANGE_PCT: args.min_range_pct,
         CONFIG_MAX_RANGE_PCT: args.max_range_pct,
         # Relative Volume parameters (per academic paper)
-        CONFIG_ORB_VOLUME_LOOKBACK_DAYS: args.volume_lookback_days
+        CONFIG_ORB_VOLUME_LOOKBACK_DAYS: args.volume_lookback_days,
+        CONFIG_TOP_N_STOCKS: args.top_n_stocks,
+        CONFIG_MIN_RELATIVE_VOLUME: args.min_relative_volume,
+        CONFIG_RELATIVE_VOLUME_LOOKBACK: args.relative_volume_lookback,
+        # ATR parameters (per academic paper)
+        CONFIG_ATR_PERIOD: args.atr_period,
+        CONFIG_ATR_STOP_MULTIPLIER: args.atr_stop_multiplier,
+        CONFIG_MIN_ATR: args.min_atr
     }
 
     client = IBClient(subject, config)

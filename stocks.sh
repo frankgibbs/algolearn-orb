@@ -22,4 +22,10 @@ python stocks.py \
   --min-pre-market-change $MIN_PRE_MARKET_CHANGE \
   --min-range-pct $MIN_RANGE_PCT \
   --max-range-pct $MAX_RANGE_PCT \
-  --volume-lookback-days $VOLUME_LOOKBACK_DAYS
+  --volume-lookback-days $VOLUME_LOOKBACK_DAYS \
+  --top-n-stocks $TOP_N_STOCKS \
+  --min-relative-volume $MIN_RELATIVE_VOLUME \
+  --relative-volume-lookback $RELATIVE_VOLUME_LOOKBACK \
+  --atr-period $ATR_PERIOD \
+  --atr-stop-multiplier $ATR_STOP_MULTIPLIER \
+  --min-atr $MIN_ATR

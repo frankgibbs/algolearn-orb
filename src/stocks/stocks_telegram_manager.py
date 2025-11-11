@@ -12,6 +12,7 @@ from io import BytesIO
 from datetime import datetime
 import pytz
 import threading
+import html
 
 class StocksTelegramManager(IObserver):
     """Handles Telegram notifications for stock trading"""
@@ -359,10 +360,16 @@ class StocksTelegramManager(IObserver):
                 url = f"https://api.telegram.org/bot{token}/sendMessage"
                 params = {
                     "chat_id": chat_id,
-                    "text": message,
+                    "text": html.escape(message),  # Escape HTML special chars
                     "parse_mode": "HTML"
                 }
-                requests.get(url, params=params)
+                response = requests.get(url, params=params)
+
+                # Check HTTP response status
+                if response.status_code != 200:
+                    logger.error(f"Telegram API error {response.status_code}: {response.text}")
+                else:
+                    logger.debug("Telegram message sent successfully")
             else:
                 # Fallback to logging if not configured
                 logger.info(f"Telegram (Stocks): {message}")
