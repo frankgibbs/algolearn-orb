@@ -123,7 +123,7 @@ class MoveStopOrderCommand(Command):
         potential_stop = round(potential_stop, 2)
 
         # Get current stop (either initial stop or already-moved trailing stop)
-        current_stop = position.trailing_stop_price if position.stop_moved else position.stop_loss
+        current_stop = position.current_stop_price
 
         # Only move stop in favorable direction (tighter, never looser)
         if position.direction == 'LONG':

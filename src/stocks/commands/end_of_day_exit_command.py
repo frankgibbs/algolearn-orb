@@ -41,12 +41,12 @@ class EndOfDayExitCommand(Command):
             self.state_manager.sendTelegramMessage("🕐 EOD: No open positions to close")
             return
 
-        logger.info(f"Checking {len(open_positions)} positions for EOD closure (academic strategy: close profitable only)")
+        logger.info(f"Checking {len(open_positions)} positions for EOD closure (academic strategy: close ALL positions)")
 
         closed_positions = []
         left_open_positions = []
 
-        # Check each position - only close profitable ones
+        # Close each position at EOD
         for position in open_positions:
             result = self._close_position_eod(position, now)
             if result == 'CLOSED':
@@ -59,17 +59,18 @@ class EndOfDayExitCommand(Command):
 
     def _close_position_eod(self, position, now):
         """
-        Close a single position at end of day IF PROFITABLE (Academic Strategy)
+        Close a single position at end of day (Academic Strategy)
 
-        Only closes positions that are currently in profit. Unprofitable positions
-        are left with their stops in place per the academic paper's methodology.
+        Closes ALL positions regardless of profitability per the academic paper's methodology.
+        Paper (Page 9): "If the stop loss was not reached intraday, we closed the position
+        at the end of the trading session (i.e., 4:00 pm ET)."
 
         Args:
             position: Position record (required)
             now: Current datetime (required)
 
         Returns:
-            'CLOSED' if position was closed, 'LEFT_OPEN' if left open, None if error
+            'CLOSED' if position was closed, 'LEFT_OPEN' if price unavailable, None if error
 
         Raises:
             ValueError: If any parameter is None
@@ -150,8 +151,8 @@ class EndOfDayExitCommand(Command):
         Send notification about EOD position management (Academic Strategy)
 
         Args:
-            closed_positions: List of profitable positions closed at EOD (required)
-            left_open_positions: List of unprofitable positions left open with stops (required)
+            closed_positions: List of positions successfully closed at EOD (required)
+            left_open_positions: List of positions that failed to close (required)
 
         Raises:
             ValueError: If any parameter is None
@@ -162,8 +163,8 @@ class EndOfDayExitCommand(Command):
             raise ValueError("left_open_positions is REQUIRED")
 
         logger.info(
-            f"Sending EOD notification: {len(closed_positions)} closed (profitable), "
-            f"{len(left_open_positions)} left open (unprofitable)"
+            f"Sending EOD notification: {len(closed_positions)} closed at EOD, "
+            f"{len(left_open_positions)} failed to close"
         )
 
         # Build notification message
@@ -173,13 +174,13 @@ class EndOfDayExitCommand(Command):
             message = "🕐 **EOD CLOSURE (Academic Strategy)**\n\n"
 
             if closed_positions:
-                message += f"✅ Closed {len(closed_positions)} PROFITABLE position(s):\n"
+                message += f"✅ Closed {len(closed_positions)} position(s) at EOD:\n"
                 for pos in closed_positions:
                     message += f"  • {pos.symbol} ({pos.direction})\n"
                 message += "\n"
 
             if left_open_positions:
-                message += f"⏸️ Left {len(left_open_positions)} UNPROFITABLE position(s) with stops:\n"
+                message += f"⚠️ Failed to close {len(left_open_positions)} position(s):\n"
                 for pos in left_open_positions:
                     message += f"  • {pos.symbol} ({pos.direction})\n"
 

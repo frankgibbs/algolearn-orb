@@ -170,7 +170,7 @@ class ManageStockPositionsCommand(Command):
         # Send notification
         direction = "📈 LONG" if position.direction == 'LONG' else "📉 SHORT"
         self.state_manager.sendTelegramMessage(
-            f"✅ Position OPEN: {direction} {position.symbol} @ ${fill_price}"
+            f"✅ Position OPEN: {direction} {position.symbol} @ ${fill_price:.2f}"
         )
 
     def _transition_to_closed(self, position, exit_price, exit_time, exit_reason):
