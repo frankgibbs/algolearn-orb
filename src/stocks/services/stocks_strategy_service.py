@@ -853,4 +853,4 @@ class StocksStrategyService:
             pct = range_data.get('range_size_pct') or range_data.get('range_pct', 0)
             table.add_row([range_data['symbol'], f"{pct:.1f}%"])
 
-        return f"<pre>{table}</pre>"
+        return f"<pre><code>{table}</code></pre>"

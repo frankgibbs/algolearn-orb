@@ -130,16 +130,16 @@ class StocksTelegramManager(IObserver):
             ranges = strategy_service.get_opening_ranges_summary()
 
             if not ranges:
-                update.message.reply_text("No opening ranges calculated today")
+                self.state_manager.sendTelegramMessage("No opening ranges calculated today")
                 return
 
             # Use shared formatting method
             message = strategy_service.format_ranges_table(ranges)
-            update.message.reply_text(message, parse_mode=ParseMode.HTML)
+            self.state_manager.sendTelegramMessage(message)
 
         except Exception as e:
             logger.error(f"Error in send_ranges: {e}", exc_info=True)
-            update.message.reply_text(f"Error: {str(e)}")
+            self.state_manager.sendTelegramMessage(f"Error: {str(e)}")
 
     def calc_ranges(self, update, context):
         """Handle /calc command - Calculate opening ranges on demand"""
@@ -360,7 +360,7 @@ class StocksTelegramManager(IObserver):
                 url = f"https://api.telegram.org/bot{token}/sendMessage"
                 params = {
                     "chat_id": chat_id,
-                    "text": html.escape(message),  # Escape HTML special chars
+                    "text": message,
                     "parse_mode": "HTML"
                 }
                 response = requests.get(url, params=params)
