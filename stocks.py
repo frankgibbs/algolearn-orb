@@ -109,6 +109,9 @@ class StocksService(IObserver):
         # End-of-day position closure at 12:50 PM PST (3:50 PM ET)
         schedule.every().day.at("12:50").do(self.end_of_day_exit)
 
+        # Daily PNL report at 12:55 PM PST (after positions are closed)
+        schedule.every().day.at("12:55").do(self.daily_pnl_report)
+
         # Connection checks every 5 minutes (following forex pattern)
         for minute in range(0, 60, 5):
             schedule.every().hour.at(f":{minute:02d}").do(self.smart_connection_check)
@@ -190,6 +193,10 @@ class StocksService(IObserver):
     def end_of_day_exit(self):
         """Close all positions at end of day and generate daily report"""
         self.subject.notify({FIELD_TYPE: EVENT_TYPE_END_OF_DAY_EXIT})
+
+    def daily_pnl_report(self):
+        """Generate and send daily PNL report"""
+        self.subject.notify({FIELD_TYPE: EVENT_TYPE_DAILY_PNL_REPORT})
 
     def smart_connection_check(self):
         """Check IB connection status"""

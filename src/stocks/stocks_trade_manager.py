@@ -9,6 +9,7 @@ from src.stocks.commands.manage_stock_positions_command import ManageStockPositi
 from src.stocks.commands.stocks_connection_manager import StocksConnectionManager
 from src.stocks.commands.strategies.orb_signal_command import ORBSignalCommand
 from src.stocks.commands.end_of_day_exit_command import EndOfDayExitCommand
+from src.stocks.commands.daily_pnl_report_command import DailyPnlReportCommand
 # from src.stocks.commands.time_based_exit_command import TimeBasedExitCommand  # Disabled: Not part of Academic ORB Strategy
 from src.stocks.commands.move_stop_order_command import MoveStopOrderCommand
 # from src.stocks.commands.analysis.volume_analysis_command import VolumeAnalysisCommand  # Disabled: Z-score not in Academic ORB Strategy
@@ -38,6 +39,7 @@ class StocksTradeManager(IObserver):
 
         # Register position management commands
         self.command_invoker.register_command(EVENT_TYPE_END_OF_DAY_EXIT, EndOfDayExitCommand(self.application_context))
+        self.command_invoker.register_command(EVENT_TYPE_DAILY_PNL_REPORT, DailyPnlReportCommand(self.application_context))
         # self.command_invoker.register_command(EVENT_TYPE_TIME_BASED_EXIT, TimeBasedExitCommand(self.application_context))  # Disabled: Not part of Academic ORB Strategy
         self.command_invoker.register_command(EVENT_TYPE_MOVE_STOP_ORDER, MoveStopOrderCommand(self.application_context))
 

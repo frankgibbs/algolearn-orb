@@ -529,6 +529,15 @@ class StocksMcpApi:
                         "required": ["symbol"]
                     }
                 ),
+                Tool(
+                    name="trigger_daily_pnl_report",
+                    description="Manually trigger the daily PNL report for testing",
+                    inputSchema={
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                ),
             ]
 
         @self.server.call_tool()
@@ -582,6 +591,8 @@ class StocksMcpApi:
                     return await self._get_sector_info(arguments or {})
                 elif name == "get_dividend_data":
                     return await self._get_dividend_data(arguments or {})
+                elif name == "trigger_daily_pnl_report":
+                    return await self._trigger_daily_pnl_report(arguments or {})
                 else:
                     raise ValueError(f"Unknown tool: {name}")
             except Exception as e:
@@ -1651,6 +1662,24 @@ class StocksMcpApi:
             logger.error(f"Error in _get_dividend_data: {e}")
             return [TextContent(type="text", text=f"Error: {str(e)}", meta={})]
 
+    async def _trigger_daily_pnl_report(self, args: dict) -> list[TextContent]:
+        """Manually trigger the daily PNL report"""
+        try:
+            # Trigger the daily PNL report event
+            self.application_context.subject.notify({FIELD_TYPE: EVENT_TYPE_DAILY_PNL_REPORT})
+
+            result = {
+                "timestamp": datetime.now().isoformat(),
+                "status": "success",
+                "message": "Daily PNL report triggered successfully"
+            }
+
+            return [TextContent(type="text", text=json.dumps(result, indent=2), meta={})]
+
+        except Exception as e:
+            logger.error(f"Error in _trigger_daily_pnl_report: {e}")
+            return [TextContent(type="text", text=f"Error triggering daily PNL report: {str(e)}", meta={})]
+
     def run(self, host="0.0.0.0", port=8003):
         """Run the MCP server with both HTTP endpoints and MCP protocol support"""
         import logging
@@ -1700,7 +1729,8 @@ class StocksMcpApi:
                     "get_account_summary",
                     "get_fundamental_data",
                     "get_sector_info",
-                    "get_dividend_data"
+                    "get_dividend_data",
+                    "trigger_daily_pnl_report"
                 ]
             }
 
@@ -2079,6 +2109,15 @@ class StocksMcpApi:
                                         "required": ["symbol"]
                                     }
                                 },
+                                {
+                                    "name": "trigger_daily_pnl_report",
+                                    "description": "Manually trigger the daily PNL report for testing",
+                                    "inputSchema": {
+                                        "type": "object",
+                                        "properties": {},
+                                        "required": []
+                                    }
+                                },
                             ]
                         }
                     }
@@ -2133,6 +2172,8 @@ class StocksMcpApi:
                         result = await self._get_sector_info(arguments)
                     elif tool_name == "get_dividend_data":
                         result = await self._get_dividend_data(arguments)
+                    elif tool_name == "trigger_daily_pnl_report":
+                        result = await self._trigger_daily_pnl_report(arguments)
                     else:
                         return {
                             "jsonrpc": "2.0",
